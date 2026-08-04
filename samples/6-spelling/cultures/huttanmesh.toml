@@ -1,0 +1,29 @@
+# One of two cultures in this sample chosen to contrast a culture's own
+# [spelling] against the built-in floor. This culture's given-name pool is
+# just as long-syllabled as wertisand.toml's — every pairing of two of its
+# six syllables sums to at least 10 characters — but this file carries no
+# [spelling] table of its own, so it inherits the setting's, which (absent
+# any campaign.toml override) is the built-in floor: `max_join_length = 9`.
+# Because the SHORTEST possible pairing here (10) already exceeds that floor,
+# a two-syllable given name from this pool is unreachable, not just unlikely:
+# `given_name()` retries ten times, never finds a join at or under 9, and
+# falls back to a single syllable every time. Contrast with wertisand.toml,
+# whose own [spelling] raises the cap to 12 and reaches its joins reliably.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Elamite was spoken in and around Susa in
+# what is now southwestern Iran and is attested across three millennia.
+
+name            = "Huttanmesh"
+species         = ""
+draws_on        = "Elamite"
+categories      = ["personal"]
+family          = ["Untashnap", "Shutruknah", "Kidinu", "Hubanhal", "Napirsha"]
+given_personal  = ["hutran", "kiddin", "napirs", "huban", "shutru", "tepti"]
+place           = ["Hut", "Kid", "Nap", "Hub", "Shut"]
+place_tail      = ["ranmesh", "dinapir", "irshuba", "anhalti", "ruktepti"]

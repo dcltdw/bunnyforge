@@ -1,0 +1,18 @@
+# Not optional, unlike sample 6's. This sample's whole point — the
+# `official:` column on --place output — only appears once this is merged
+# into your campaign's campaign.toml. See the README's first paragraph.
+#
+# This file carries its own explicit [names] table header rather than
+# relying on whatever table happened to be open at the end of your
+# campaign.toml — do not simply paste the bare key below under a table
+# that isn't [names].
+#
+# official_culture names nabukathir.toml's key (derived from its `name`,
+# lowercased with spaces and hyphens removed). Any settlement generated for
+# byblashar or oxariand additionally prints an administrative name drawn
+# from nabukathir; nabukathir's own settlements print no `official:` column
+# for themselves, because generate_names.py's --place skips it exactly when
+# the culture being printed IS the official one.
+
+[names]
+official_culture = "nabukathir"

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bunnyforge"
+version = "0.1.0"
+description = "Tools for running a TTRPG campaign workspace: review, export, deploy, name generation."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "David Leung" }]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: Role-Playing",
+]
+
+[project.urls]
+Repository = "https://github.com/dcltdw/bunnyforge"
+Issues = "https://github.com/dcltdw/bunnyforge/issues"
+
+[project.scripts]
+bunnyforge = "bunnyforge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# data/ is not a Python package (no __init__.py), so packages.find does not
+# collect it and its files would be absent from any built wheel — measured, not
+# assumed. init reads them through importlib.resources, so they have to ship.
+[tool.setuptools.package-data]
+bunnyforge = ["data/**/*"]

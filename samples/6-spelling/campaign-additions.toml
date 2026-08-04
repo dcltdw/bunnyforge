@@ -1,0 +1,19 @@
+# Optional. This sample works copy-and-go WITHOUT this file — see the
+# README. Merge the block below into your campaign's campaign.toml only if
+# you also want to see the middle spelling layer (setting-wide, layered
+# between the built-in default and a culture's own [spelling]) take effect.
+#
+# [names.spelling]'s max_length here (8) is more restrictive than the
+# built-in default (12). It reaches BOTH cultures in this sample, including
+# wertisand.toml, which carries its own [spelling] — because that culture's
+# own table sets only max_join_length, never max_length. Each layer
+# overrides only the keys it sets, so the setting layer still supplies
+# wertisand's max_length even though a later layer already won on
+# max_join_length. Concretely: with this merged, "Yakweshtar" (10
+# characters) — one of wertisand's own family names — stops appearing in
+# output, and its culture's 12-character given-name joins stop appearing
+# too, both now rejected by the tighter max_length before max_join_length
+# is ever consulted.
+
+[names.spelling]
+max_length = 8

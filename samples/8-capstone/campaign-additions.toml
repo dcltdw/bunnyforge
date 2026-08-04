@@ -1,0 +1,31 @@
+# Not optional, unlike sample 6's. This file carries two separate merges:
+# `official_culture` (see sample 7) and a setting-wide [names.spelling]
+# (see sample 6). Both need merging into your campaign's campaign.toml for
+# everything this sample demonstrates to actually take effect. See the
+# README's first paragraph.
+#
+# This file carries its own explicit table headers rather than relying on
+# whatever table happened to be open at the end of your campaign.toml: a
+# bare [names] header above official_culture, and [names.spelling] as its
+# own header AFTER that bare key — never merge these keys under whatever
+# table your own campaign.toml happens to leave open last.
+#
+# official_culture names nisayavesh.toml's key. Every settlement generated
+# for takshashri, frashovant, or khotanreza additionally prints an
+# administrative name drawn from nisayavesh; nisayavesh's own settlements
+# print no `official:` column for themselves.
+#
+# [names.spelling]'s max_length here (8) is more restrictive than the
+# built-in default (12), and reaches every culture in this sample —
+# including khotanreza.toml, which carries its own [spelling]. That
+# culture's own table sets only max_join_length, never max_length, so this
+# setting-wide layer still supplies khotanreza's max_length even though a
+# later layer already won on max_join_length. Concretely: with this merged,
+# "Khotanraja" (10 characters) and "Nandivard" (9 characters) — two of
+# khotanreza's own family names — stop appearing in output.
+
+[names]
+official_culture = "nisayavesh"
+
+[names.spelling]
+max_length = 8

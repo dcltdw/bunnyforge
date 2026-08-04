@@ -1,0 +1,21 @@
+# One of three invented places in this sample, each drawing on a different
+# real tradition. `species` is deliberately empty here too: several species
+# live in Birhankidus and share its names. This tool ships no
+# species-to-tradition mappings — that mapping is a setting-authorship
+# decision, not this tool's to make. Lookup happens by tradition
+# (`generate_names.py "ge'ez"`), never by species.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Ge'ez is the classical liturgical language of
+# the Ethiopian and Eritrean churches; its inventory leans on the consonant
+# clusters of its Semitic roots (birhan, kidan, meskel, weldu) distinct from
+# the other two cultures in this sample.
+
+name            = "Birhankidus"
+species         = ""
+draws_on        = "Ge'ez"
+categories      = ["personal"]
+family          = ["Weldu", "Zewde", "Meskel", "Tesfay", "Ghebre"]
+given_personal  = ["haile", "selam", "kidan", "birhan", "meret", "senay"]
+place           = ["Deb", "Kid", "Sel", "Bir", "Zew"]
+place_tail      = ["remot", "anesh", "amora", "hanu", "dinet"]

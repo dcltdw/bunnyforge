@@ -1,0 +1,31 @@
+# One culture recognising four genders — Nexus, Steward, Wildheart, Shaper —
+# instead of the ["m", "f"] every earlier sample uses.
+# This is the first worked example in the repo of `categories` holding
+# anything but a gender binary: the CLI's `--gender` flag matches a category
+# name verbatim and case-sensitively, so the keys below are lowercase
+# (nexus, steward, wildheart, shaper) precisely so `--gender nexus` works as
+# a player would type it. This file's own comments and the sample's README
+# write them capitalised (Nexus, Steward, Wildheart, Shaper) because that is
+# how they would appear in prose or on a character sheet — only the TOML
+# keys and the --gender argument need to stay lowercase.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Nabataean was the language of the
+# Petra-based Arabian trading kingdom, attested mainly through inscriptions.
+
+name            = "Shaqirreth"
+species         = ""
+draws_on        = "Nabataean"
+categories      = ["nexus", "steward", "wildheart", "shaper"]
+family          = ["Aretas", "Obodas", "Rabbel", "Malichos", "Huldu"]
+given_nexus     = ["shaq", "reb", "dush", "qir", "nath", "ael"]
+given_steward   = ["obod", "hadr", "kem", "rasu", "tan", "iel"]
+given_wildheart = ["malk", "yrra", "qasu", "behr", "onai", "ith"]
+given_shaper    = ["huld", "srai", "qoth", "nemu", "asha", "riel"]
+place           = ["Shaq", "Reth", "Obod", "Aret", "Rab"]
+place_tail      = ["irim", "avan", "ashir", "ulet", "onim"]

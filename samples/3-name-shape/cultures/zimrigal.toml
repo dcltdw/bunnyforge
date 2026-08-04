@@ -1,0 +1,26 @@
+# One of two cultures in this sample chosen to contrast generation knobs.
+# `species` is deliberately empty: a culture here is a PLACE, not a people —
+# several species live in Zimrigal and share its names. This tool ships no
+# species-to-tradition mappings; that decision belongs to setting authorship,
+# not to this tool.
+#
+# `draws_on` names a real, attested, historical tradition — Akkadian — so you
+# know where to look for source material.
+#
+# This culture isolates the "narrow" end of the generation knobs: `join =
+# "concat"` never inserts a separator, `place_split` is omitted entirely (so
+# it defaults to 0.0 and a place name is never split into two words), and
+# `given_syllables` is pinned to exactly 2 with a single weight of 1. Given
+# names here are always a solid two-syllable concatenation, never hyphenated.
+# Contrast with hattuwassa.toml, which spreads all three knobs the other way.
+
+name            = "Zimrigal"
+species         = ""
+draws_on        = "Akkadian"
+categories      = ["personal"]
+family          = ["Ashurbani", "Nabopolas", "Sargonid", "Enlilana", "Marduka"]
+given_personal  = ["shar", "nabu", "adad", "ilu", "tukul", "ashur", "enlil", "marduk", "sin", "zimri"]
+place           = ["Nab", "Ur", "Kish", "Bab", "Zim"]
+place_tail      = ["gal", "tum", "dur", "kal", "rish"]
+join            = "concat"
+given_syllables = { min = 2, max = 2, weights = [1] }

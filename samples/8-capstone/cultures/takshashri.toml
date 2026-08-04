@@ -1,0 +1,25 @@
+# One of three regional cultures in this capstone sample, chosen to carry
+# the "categories that are not genders" lesson (see sample 5) inside a
+# setting that also has an official language and mixed name shapes.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Gandhari was written in the Kharosthi script
+# and is attested extensively through Buddhist manuscripts from the Gandhara
+# region. `categories` here are life-stage registers, not genders — a person
+# holds a householder name before renouncing the household, and a different
+# name after.
+
+name              = "Takshashri"
+species           = ""
+draws_on          = "Gandhari"
+categories        = ["householder", "renunciant"]
+family            = ["Kanishka", "Menandra", "Azesha", "Gondopha", "Vasumitra"]
+given_householder = ["kani", "mena", "azes", "gond", "vasu", "dharm"]
+given_renunciant  = ["budd", "sangh", "arah", "bodhi", "nirva", "sutra"]
+place             = ["Taksh", "Purush", "Charsa", "Swat", "Peuk"]
+place_tail        = ["ash", "apur", "dava", "ela", "naga"]

@@ -1,0 +1,26 @@
+# One of two regional vernaculars in this sample, layered by an administrative
+# overlay rather than replaced by it. See nabukathir.toml for the
+# administrative culture (Imperial Aramaic) and this sample's README for how
+# `official_culture` combines the two: every settlement here keeps its local
+# Bactrian name and additionally carries an administrative one.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Bactrian, an Eastern Iranian language of the
+# Central Asian satrapy of Bactria, sits at the opposite edge of the same
+# empire from Byblashar's Levantine coast — Aramaic administrative documents
+# have themselves been recovered from Bactria, confirming the overlay
+# reached this far east.
+
+name            = "Oxariand"
+species         = ""
+draws_on        = "Bactrian"
+categories      = ["personal"]
+family          = ["Vishtaspa", "Farnavar", "Spantaka", "Auruvant", "Kanishwar"]
+given_personal  = ["vish", "farn", "spant", "auru", "kani", "zara"]
+place           = ["Oxar", "Marv", "Balkh", "Zariq", "Farah"]
+place_tail      = ["iaspa", "ghana", "akand", "ushka", "avand"]

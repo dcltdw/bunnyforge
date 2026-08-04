@@ -1,0 +1,28 @@
+# One culture whose `categories` are not genders at all: `public`, `kin`,
+# `initiate`. A person here holds a name used in public life, a different
+# name used only among kin, and a third name taken at initiation — three
+# registers of the same personal name, selected the same way `--gender`
+# selects a pool for any other culture in this project. Read this sample's
+# README before assuming these are three name components a person carries
+# simultaneously; they are not — `categories` only ever selects which
+# `given_*` pool a name is drawn from.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Meroitic was the language of the Kingdom of
+# Kush, written in its own script that remains only partially deciphered.
+
+name            = "Natakabal"
+species         = ""
+draws_on        = "Meroitic"
+categories      = ["public", "kin", "initiate"]
+family          = ["Natakama", "Amanishe", "Arikankh", "Teriteq", "Shanakd"]
+given_public    = ["nata", "aman", "arik", "teri", "shan", "qore"]
+given_kin       = ["kdak", "nekh", "tama", "resh", "abal", "khat"]
+given_initiate  = ["qash", "nter", "habl", "yerq", "dakh", "amun"]
+place           = ["Nata", "Aman", "Arik", "Teri", "Shan"]
+place_tail      = ["kaman", "ishak", "ankha", "teqas", "akdak"]

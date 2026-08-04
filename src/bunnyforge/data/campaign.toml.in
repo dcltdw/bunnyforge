@@ -1,0 +1,39 @@
+# campaign.toml — this workspace's identity and shape.
+# Read by the bunnyforge package. This file is also the workspace marker: the tools
+# resolve their workspace from --workspace, else BUNNYFORGE_WORKSPACE, else the
+# nearest campaign.toml walking up from the current directory.
+
+[campaign]
+name      = "@@NAME@@"
+namespace = "@@NAMESPACE@@"
+
+[names]
+cultures = "names/cultures"        # a DIRECTORY of one-file-per-culture
+                                   # inventories; required — the name generator
+                                   # cannot run without it
+
+# Everything below is optional, and commented out. Each line shows the built-in
+# default that applies while it stays commented. They are comments rather than
+# live keys on purpose: a second copy of the defaults is a second thing to
+# drift. Uncomment only what you actually want to override.
+#
+# official_culture = "vashkand"    # settlements also carry a name in this
+#                                  # culture's language; unset by default
+
+# [names.spelling]                 # setting-wide orthographic overrides;
+# ascii_only = true                # each key overrides the built-in default
+
+# [workspace]
+# entity_dirs     = ["NPCs", "Factions", "Setting", "Mechanics", "PCs", "Ideas",
+#                    "Sessions", "Handouts"]
+# inherit_dirs    = ["Briefs", "Perceptions"]
+# compendium_dirs = ["NPCs", "Factions", "Setting", "Mechanics", "PCs", "Ideas"]
+# root_docs       = ["AGENTS.md", "compendium.md", "front-burner.md",
+#                    "open-questions.md", "out-of-game.md", "situation-design.md",
+#                    "style-guide.md", "tickets.md"]
+# exclude_dirs    = ["_Ignore", "_Archive", "_ExtractInbound", "_Templates",
+#                    "Sheets", "Reviews", "docs", "scripts", "tests"]
+# briefs_dir      = "Briefs"
+# sheets_dir      = "Sheets"
+# perceptions_dir = "Perceptions"
+# type_dirs       = { npc = "NPCs", faction = "Factions", place = "Setting" }

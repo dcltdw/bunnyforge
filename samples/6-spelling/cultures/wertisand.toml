@@ -1,0 +1,36 @@
+# One of two cultures in this sample chosen to contrast a culture's own
+# [spelling] against the built-in floor. Every syllable in this culture's
+# given-name pool is 6 characters, so any two-syllable join is exactly 12
+# characters — comfortably past the built-in `max_join_length` floor of 9.
+# Without the [spelling] block below, `given_name()` would spend its ten
+# retries failing to find a join under 9, then fall back to a single
+# syllable every time; a two-syllable given name from this pool would be
+# structurally unreachable. Contrast with huttanmesh.toml, which carries the
+# same shape of long syllables but no [spelling] of its own, so exactly that
+# happens to it.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Tocharian was spoken in the Tarim Basin
+# oasis city-states and is attested through Buddhist manuscripts.
+#
+# [spelling] MUST COME LAST. In TOML a table header swallows every bare key
+# that follows it, so placing this block any earlier would swallow `place`
+# and `place_tail` below it, and the loader would reject this file for a
+# missing `name` — the right error for a baffling-looking reason.
+
+name            = "Wertisand"
+species         = ""
+draws_on        = "Tocharian"
+categories      = ["personal"]
+family          = ["Yakweshtar", "Ashiyar", "Werstan", "Klyomek", "Tsoparu"]
+given_personal  = ["yakwek", "ashiyo", "wersti", "klyoma", "tsopar", "onkalm"]
+place           = ["Wert", "Ashi", "Klyo", "Tsop", "Onka"]
+place_tail      = ["isand", "yomar", "aparu", "ankalm", "eshtir"]
+
+[spelling]
+max_join_length = 12

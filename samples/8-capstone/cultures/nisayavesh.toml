@@ -1,0 +1,24 @@
+# The administrative culture for this capstone sample — see this sample's
+# README for how it combines with the other three cultures here. Named by
+# campaign-additions.toml's `[names].official_culture`, exactly as
+# nabukathir.toml is in sample 7.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Parthian was the language of the Arsacid
+# dynasty that ruled a vast Iranian empire over many regional vernaculars —
+# a distinct historical administrative layer from sample 7's Imperial
+# Aramaic, chosen fresh for this sample rather than reused.
+
+name            = "Nisayavesh"
+species         = ""
+draws_on        = "Parthian"
+categories      = ["personal"]
+family          = ["Arsaces", "Mithradat", "Phraates", "Vologasu", "Artabanu"]
+given_personal  = ["arsak", "mithra", "phraat", "volog", "artab", "gotarz"]
+place           = ["Nisa", "Hecat", "Ctesi", "Dara", "Rhaga"]
+place_tail      = ["yave", "ompy", "phon", "begi", "esif"]

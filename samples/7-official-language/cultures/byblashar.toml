@@ -1,0 +1,25 @@
+# One of two regional vernaculars in this sample, layered by an administrative
+# overlay rather than replaced by it. See nabukathir.toml for the
+# administrative culture (Imperial Aramaic) and this sample's README for how
+# `official_culture` combines the two: every settlement here keeps its local
+# Phoenician name and additionally carries an administrative one.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Phoenician was the language of the Levantine
+# coastal city-states — Byblos, Sidon, Tyre — many of which fell under
+# Achaemenid Persian administration, the same empire whose chancery used
+# Imperial Aramaic across its provinces.
+
+name            = "Byblashar"
+species         = ""
+draws_on        = "Phoenician"
+categories      = ["personal"]
+family          = ["Baalshan", "Ashtarot", "Melqartu", "Hiramesh", "Sidqubal"]
+given_personal  = ["baal", "ashtar", "melq", "hiram", "sidq", "zabul"]
+place           = ["Byb", "Sido", "Tyru", "Ashk", "Kiti"]
+place_tail      = ["lashar", "onport", "subaal", "elqart", "imesh"]

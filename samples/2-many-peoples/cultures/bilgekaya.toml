@@ -1,0 +1,21 @@
+# One of three invented places in this sample, each drawing on a different
+# real tradition. `species` is deliberately empty here too: several species
+# live in Bilgekaya and share its names. This tool ships no
+# species-to-tradition mappings — that mapping is a setting-authorship
+# decision, not this tool's to make. Lookup happens by tradition
+# (`generate_names.py oldturkic`), never by species.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Old Turkic is the language of the Orkhon
+# inscriptions, steppe rather than city; its inventory leans on open,
+# vowel-heavy syllables (bilge, alp, kutlug, arslan) distinct from the other
+# two cultures in this sample.
+
+name            = "Bilgekaya"
+species         = ""
+draws_on        = "Old Turkic"
+categories      = ["personal"]
+family          = ["Ashina", "Tarkhan", "Yabgu", "Bumin", "Kulchur"]
+given_personal  = ["bilge", "alp", "kutlug", "arslan", "tengri", "yarlig"]
+place           = ["Kok", "Bil", "Ar", "Ku", "Bag", "Tar"]
+place_tail      = ["altay", "gekaya", "slan", "tlug", "buga"]

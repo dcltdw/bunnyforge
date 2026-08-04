@@ -1,0 +1,30 @@
+# One of three regional cultures in this capstone sample, chosen to carry
+# the "mixed name shape" lesson (see sample 3) — `join`, `place_split`, and
+# `given_syllables` all set to their "wide" values, contrasted against this
+# sample's other cultures, which pin theirs narrow (or leave them at the
+# defaults). Categories here ARE a gender pair (`m`/`f`), unlike
+# takshashri.toml's life-stage registers — the point of a capstone is that
+# both shapes coexist in one setting.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Avestan is the liturgical language of the
+# Zoroastrian Avesta, an Old Iranian tradition distinct from this sample's
+# other three cultures' traditions.
+
+name            = "Frashovant"
+species         = ""
+draws_on        = "Avestan"
+categories      = ["m", "f"]
+family          = ["Frashoshtra", "Jamaspa", "Vishtaru", "Haosravah", "Yoishta"]
+given_m         = ["zara", "ahura", "mazd", "vohu", "asha", "mith"]
+given_f         = ["anahi", "ashi", "daena", "chista", "armaiti", "spenta"]
+place           = ["Fras", "Airya", "Haom", "Vouru", "Raosh"]
+place_tail      = ["hova", "anav", "vare", "kash", "nair"]
+join            = "hyphen"
+place_split     = 0.4
+given_syllables = { min = 1, max = 3, weights = [0.3, 0.4, 0.3] }

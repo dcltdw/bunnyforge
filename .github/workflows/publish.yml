@@ -1,0 +1,23 @@
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing (OIDC); no stored token
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,28 @@
+# The administrative culture for this sample: not a third regional vernacular,
+# but the imperial chancery's own naming layer, applied on top of EVERY
+# settlement in the setting regardless of which local culture (byblashar.toml
+# or oxariand.toml) it belongs to. This is what campaign-additions.toml's
+# `[names].official_culture` names. See this sample's README for the
+# mechanism and the actual `--place` output.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Imperial Aramaic was the actual administrative
+# lingua franca of the Achaemenid Persian empire, layered over local
+# vernaculars from the Levant to Bactria — the same historical reach this
+# sample's two regional cultures represent. The mechanism this sample
+# demonstrates and the tradition it draws on to illustrate it are the same
+# historical fact, not an arbitrary pairing.
+
+name            = "Nabukathir"
+species         = ""
+draws_on        = "Imperial Aramaic"
+categories      = ["personal"]
+family          = ["Naburesh", "Sinaddan", "Belshadu", "Aditanu", "Marduresh"]
+given_personal  = ["nabu", "sinad", "belsh", "adit", "mard", "yadin"]
+place           = ["Nabu", "Sinar", "Belka", "Adita", "Marda"]
+place_tail      = ["kathir", "addanu", "shadur", "tanesh", "reshal"]

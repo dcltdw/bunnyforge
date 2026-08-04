@@ -1,0 +1,34 @@
+# One of three regional cultures in this capstone sample, chosen to carry
+# the "a culture's own [spelling]" lesson (see sample 6). This file's
+# given_personal pool has the same long-syllable shape as sample 6's pair;
+# see this sample's README for the computed join lengths and what changes
+# once campaign-additions.toml's setting-wide [names.spelling] is merged on
+# top of this culture's own override.
+#
+# `species` is deliberately empty, as in every sample: a culture here is a
+# PLACE, not a people, and this tool ships no species-to-tradition mappings —
+# which real tradition a fantasy species draws on is a setting-authorship
+# decision, not this tool's to make.
+#
+# `draws_on` names a real, attested, historical tradition so you know where
+# to look for source material. Khotanese was a Middle Iranian language of
+# the Tarim Basin oasis kingdom of Khotan, attested through Buddhist texts
+# distinct from sample 6's Tocharian, another Tarim Basin tradition spoken
+# by a different, non-Iranian-speaking people.
+#
+# [spelling] MUST COME LAST. In TOML a table header swallows every bare key
+# that follows it, so placing this block any earlier would swallow `place`
+# and `place_tail` below it, and the loader would reject this file for a
+# missing `name` — the right error for a baffling-looking reason.
+
+name            = "Khotanreza"
+species         = ""
+draws_on        = "Khotanese"
+categories      = ["personal"]
+family          = ["Vijitasi", "Gyazaste", "Khotanraja", "Nandivard", "Suraja"]
+given_personal  = ["khotan", "vijay", "gyazas", "nandiv", "suraj", "ttamra"]
+place           = ["Khot", "Vijay", "Gyaz", "Nand", "Sura"]
+place_tail      = ["anre", "ajas", "asta", "ivar", "raje"]
+
+[spelling]
+max_join_length = 12

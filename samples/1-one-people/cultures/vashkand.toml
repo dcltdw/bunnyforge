@@ -1,0 +1,18 @@
+# One culture, and everyone in the setting uses it.
+#
+# `species` is deliberately empty. A culture here is a PLACE, not a people:
+# anyone from Vashkand, whatever their species, has a Vashkand name. That is
+# also why this tool ships no species-to-tradition mappings — which real
+# naming tradition a fantasy species draws on is your decision, not ours.
+#
+# `draws_on` names a real, attested, historical tradition so you know where to
+# look for source material. Sogdian was the lingua franca of the Silk Road.
+
+name            = "Vashkand"
+species         = ""
+draws_on        = "Sogdian"
+categories      = ["personal"]
+family          = ["Nanai", "Wanu", "Zhamat", "Chur", "Aspad"]
+given_personal  = ["farn", "khsh", "vagh", "spad", "mihr", "zhan"]
+place           = ["Marak", "Panch", "Zaraf", "Kushan"]
+place_tail      = ["kath", "vand", "shan", "abad"]
