@@ -9,6 +9,13 @@ answered by review itself. Module invocations (`python3 -m
 bunnyforge.review`) keep working unchanged: the dispatcher adds a front
 door, it does not move the house.
 
+The `bunnyforge` command itself is not a file in this package. pyproject's
+`[project.scripts]` entry tells pip to generate a small launcher in the
+environment's bin/ at install time, whose whole body is `from bunnyforge.cli
+import main; sys.exit(main())`. That is why `bunnyforge <cmd>` and `python3
+-m bunnyforge <cmd>` reach this function by different routes, and why
+grepping the source for the command name finds nothing.
+
 Deliberately NOT argparse subparsers + nargs=REMAINDER: measured on Python
 3.13, a leading option-like token (`bunnyforge review --help`) is never
 handed to REMAINDER and dies as "unrecognized arguments" — the exact case

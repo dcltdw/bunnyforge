@@ -252,8 +252,9 @@ recording it:
 - **Current state** — position, momentum, who knows what right now — belongs in
   `[[front-burner]]` and nowhere else.
 
-Writing a world-level rule into a single NPC file is how the same lesson gets
-re-learned in every other file.
+A world-level rule recorded in one NPC's file is invisible everywhere else. The
+next session that needs it will not find it, and will invent an answer that
+quietly contradicts this one.
 
 ## Situations, not plots
 

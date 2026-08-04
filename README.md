@@ -94,6 +94,13 @@ not canon.
 (`bunnyforge test` is for running a *campaign's* tests from inside a
 workspace — it is not this package's test runner.)
 
+The `bunnyforge` command is not a file in this repository: pip generates a
+launcher from `[project.scripts]` in `pyproject.toml` at install time, and
+it calls the dispatcher in [`src/bunnyforge/cli.py`](src/bunnyforge/cli.py).
+Every subcommand is also runnable on its own — `python3 -m
+bunnyforge.generate_names` — which is exactly what the dispatcher forwards
+to.
+
 Design history lives in [docs/superpowers/specs/](docs/superpowers/specs/).
 
 ## License

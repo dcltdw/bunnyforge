@@ -1,5 +1,5 @@
 ---
-type: brief
+type: npc
 session:
 npc:
 ---

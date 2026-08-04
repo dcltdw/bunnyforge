@@ -45,13 +45,20 @@ class InitError(Exception):
 # substituted rather than copied.
 Packaged = namedtuple("Packaged", "resource dest canonical render")
 
-# All 16 of _Templates/, verbatim -- including both doctrine skeletons under
-# their .skeleton names. The suffix exists only inside _Templates/ and data/.
+# What a workspace's _Templates/ holds, verbatim: one README, three session
+# briefs, and eight durable writeups. The -brief suffix marks the axis that
+# matters -- brief (true THIS session) vs writeup (true always) -- which is
+# why it cannot simply be dropped: faction-brief.md's writeup is faction.md.
+#
+# The two doctrine skeletons are NOT here. They land once, at the workspace
+# root under the names root_docs expects (see MANIFEST below); their prompts
+# survive being filled in, so a pristine second copy under a .skeleton name
+# bought nothing but a file a user could not tell the purpose of. The suffix
+# now appears only in data/ and in this repo's own _Templates/.
 TEMPLATE_FILES = (
-    "README.md", "brief-template.md", "brief.md", "faction-brief.md",
-    "faction.md", "handout.md", "idea.md", "mechanic.md", "npc.html",
-    "npc.md", "pc.md", "place-brief.md", "session.md", "setting.md",
-    "situation-design.skeleton.md", "style-guide.skeleton.md",
+    "README.md", "npc-brief.md", "faction-brief.md", "place-brief.md",
+    "faction.md", "handout.md", "idea.md", "mechanic.md",
+    "npc.md", "pc.md", "session.md", "setting.md",
 )
 
 # The 8 entity_dirs then the 2 inherit_dirs of _config._DEFAULTS. Each gets its

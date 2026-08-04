@@ -285,18 +285,24 @@ class TestWhatInitWrites(unittest.TestCase):
                    for p in target.rglob("*") if p.is_file()}
         self.assertEqual(written, {e.dest for e in init.MANIFEST})
 
-    def test_the_two_skeletons_also_land_under_their_canonical_names(self):
-        # The .skeleton suffix exists only inside _Templates/ and data/. A
-        # root doc named style-guide.skeleton.md is not in root_docs and would
-        # never be read — so the same bytes have to land twice.
+    def test_the_two_skeletons_land_under_their_canonical_names(self):
+        # The .skeleton suffix exists only inside data/ and this repo's own
+        # _Templates/. A root doc named style-guide.skeleton.md is not in
+        # root_docs and would never be read, so the packaged bytes land at
+        # the plain name instead -- and, since the prompts now survive being
+        # filled in, they land there ONLY. A second pristine copy under
+        # _Templates/ would just be a file whose purpose a user cannot tell.
         target = _scaffold(self)
         for name in ("style-guide.md", "situation-design.md"):
             with self.subTest(name=name):
-                skeleton = target / "_Templates" / name.replace(
-                    ".md", ".skeleton.md")
+                resource = f"templates/{name.replace('.md', '.skeleton.md')}"
                 self.assertTrue((target / name).is_file())
                 self.assertEqual((target / name).read_bytes(),
-                                 skeleton.read_bytes())
+                                 init.packaged_bytes(resource))
+                self.assertFalse(
+                    (target / "_Templates" / Path(resource).name).exists(),
+                    "the skeleton copy under _Templates/ should no longer be "
+                    "written into a workspace")
 
     def test_scaffolds_a_tests_directory(self):
         # The doctrine-skeleton pattern applied to tests: a folder that
