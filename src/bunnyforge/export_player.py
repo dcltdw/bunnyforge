@@ -175,6 +175,7 @@ def run_export(ws: Workspace, out_dir: Path) -> tuple[ExportResult, list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
+        prog="bunnyforge export-player",
         description="Write player-safe copies of content files to Export/.")
     parser.add_argument(
         "--workspace", metavar="PATH",

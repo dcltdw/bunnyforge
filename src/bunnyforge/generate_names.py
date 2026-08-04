@@ -656,6 +656,7 @@ def cultures_with(cultures: dict, category: str) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="bunnyforge names",
         description="Generate culture-appropriate names.",
     )
     parser.add_argument("culture", nargs="?", help="Culture, species, or real-world basis")

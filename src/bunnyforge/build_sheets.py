@@ -599,6 +599,7 @@ def render(name: str, etype: str, session: str, writeup: dict, brief: dict,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
+        prog="bunnyforge build-sheets",
         description="Build one-page HTML reference sheets (NPC, faction, place) "
                     "for a session.",
     )
