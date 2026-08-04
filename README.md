@@ -103,6 +103,28 @@ to.
 
 Design history lives in [docs/superpowers/specs/](docs/superpowers/specs/).
 
+## Releasing
+
+Releases are triggered by pushing a tag, and published to PyPI by
+[trusted publishing](https://docs.pypi.org/trusted-publishers/) — there is
+no API token stored anywhere.
+
+1. Land the changes on `main` in the usual way (branch, PR, review).
+2. Bump `version` in `pyproject.toml`. **This is a separate step from the
+   tag, which is why they drift** — CI refuses a tag that disagrees with it.
+3. Tag and push:
+
+       git tag vX.Y.Z && git push origin vX.Y.Z
+
+4. Watch `publish.yml`. It verifies the tag against `pyproject.toml`, builds
+   the sdist and wheel, and uploads.
+5. Bump the pin in any campaign that depends on this package, in its own
+   commit, so the upgrade is deliberate and its drift guard can report what
+   changed underneath it.
+
+Note that PyPI never releases a name and never lets a version number be
+reused, even after deletion — so step 2 is the one to get right.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
