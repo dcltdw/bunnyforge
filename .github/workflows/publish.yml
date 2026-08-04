@@ -16,6 +16,21 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+      # The tag and pyproject's version are edited at different times, so
+      # they drift. Unchecked, that fails in two unhelpful ways: a tag ahead
+      # of the version builds the OLD version and PyPI rejects it as
+      # already-existing (safe, but the error names the wrong problem), and a
+      # version ahead of the tag simply never publishes, with no signal at
+      # all. Fail here instead, naming both values.
+      - name: Tag must match the version in pyproject.toml
+        run: |
+          v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version $v"
+            echo "Bump version in pyproject.toml, or retag to v$v."
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches pyproject version $v"
       - name: Build sdist and wheel
         run: |
           pip install build
