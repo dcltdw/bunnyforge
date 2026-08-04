@@ -105,7 +105,8 @@ def _no_tests_card(*, scaffolded: bool) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the workspace test suite.")
+    parser = argparse.ArgumentParser(
+        prog="bunnyforge test", description="Run the workspace test suite.")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Print each test as it runs")
     args = parser.parse_args(argv)

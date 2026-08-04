@@ -18,7 +18,7 @@ real files; the manifest is what makes that drift a red test rather than a
 matter of discipline.
 
 Usage:
-    python3 -m bunnyforge.init PATH --name "My Campaign" [--namespace mycampaign]
+    bunnyforge init PATH --name "My Campaign" [--namespace mycampaign]
 
 Stdlib only.
 """
@@ -188,7 +188,7 @@ def write_workspace(path: Path, name: str, namespace: str) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python3 -m bunnyforge.init",
+        prog="bunnyforge init",
         description="Scaffold a new campaign workspace.")
     parser.add_argument("path", metavar="PATH",
                         help="Directory to create; must not exist, or be empty")
@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Created campaign workspace {path} — {len(written)} files "
           f"(name {args.name!r}, namespace {namespace!r}).")
-    print(f"Next: cd {path} && python3 -m bunnyforge.review checkup")
+    print(f"Next: cd {path} && bunnyforge review checkup")
     return 0
 
 

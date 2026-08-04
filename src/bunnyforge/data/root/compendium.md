@@ -7,7 +7,7 @@ resist the urge to expand them in place.
 
 **Maintenance rule:** when a new file is created anywhere in this workspace, add
 a line here in the same sitting. An unindexed file is an invisible file, and
-`python3 -m bunnyforge.review checkup` warns about every entity missing from here.
+`bunnyforge review checkup` warns about every entity missing from here.
 
 Out-of-game planning (phases, pacing, design intent) lives in `[[out-of-game]]`,
 not here — this file holds world truth only. Deferred workspace and tooling work

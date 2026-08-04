@@ -430,7 +430,8 @@ def format_terminal(findings: list[Finding], suite: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run a named workspace review suite.")
+    parser = argparse.ArgumentParser(
+        prog="bunnyforge review", description="Run a named workspace review suite.")
     parser.add_argument("suite", nargs="?", default="checkup",
                         help=f"Suite to run (default: checkup). Known: {', '.join(SUITES)}")
     parser.add_argument("--html", action="store_true",

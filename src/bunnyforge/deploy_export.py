@@ -217,6 +217,7 @@ def render_tree(export_dir: Path, staging: Path, base: str,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
+        prog="bunnyforge deploy-export",
         description="Render Export/ into a DokuWiki staging tree.")
     parser.add_argument("--render-only", action="store_true",
                         help="Render to --staging and stop (currently required)")

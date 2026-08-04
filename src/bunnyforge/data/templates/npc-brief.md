@@ -17,7 +17,7 @@ is not the same as an absent one.
 Filename must match the writeup: Briefs/session-014/mira-venn.md pairs with
 NPCs/mira-venn.md.
 
-Build sheets with:  python3 -m bunnyforge.build_sheets 14
+Build sheets with:  bunnyforge build-sheets 14
 -->
 
 ## This session

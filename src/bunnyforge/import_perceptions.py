@@ -191,6 +191,7 @@ def build_file(page_id: str, raw: str, mtime: int, as_of_label: str | None) -> s
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
+        prog="bunnyforge import-perceptions",
         description="Export player-authored DokuWiki pages into Perceptions/ (one-way).",
     )
     parser.add_argument(
