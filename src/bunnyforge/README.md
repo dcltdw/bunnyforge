@@ -282,6 +282,14 @@ too**, rather than followed. A wiki whose canonical URL redirects (apex to
 across a host change. Point `[wiki] url` at the wiki's canonical base URL —
 the JSON-RPC endpoint has no legitimate reason to redirect.
 
+Both credential headers are sent on every call: `Authorization: Bearer
+<token>` and `X-DokuWiki-Token: <token>`. Some hosts run PHP as CGI/FastCGI,
+which makes Apache strip `Authorization` before PHP ever sees it;
+`X-DokuWiki-Token` is not special-cased that way and is what actually works
+on such hosts, while keeping `Authorization` preserves compatibility with any
+build that only honours that one. See the troubleshooting note below if
+every call fails with `-32603`.
+
 It also needs a DokuWiki API token, resolved in order:
 
 1. the `BUNNYFORGE_WIKI_TOKEN` environment variable, or
@@ -293,6 +301,14 @@ directory is checked too: a `.bunnyforge/` writable by group or world is
 refused with `chmod 700 <path>`, because anyone who can write the directory
 can replace the credential inside it. Create the token on the wiki itself:
 log in as the deploy user, open its profile, and generate an API token there.
+
+**Troubleshooting: every call fails with `-32603`.** The wiki received no
+usable credential at all. The likely cause is the host running PHP as
+CGI/FastCGI, which makes Apache strip the `Authorization` header before PHP
+ever sees it — a hosting-config problem, not a bunnyforge bug. bunnyforge
+already sends `X-DokuWiki-Token` alongside `Authorization`, which usually
+survives on such hosts; if `-32603` persists, check the token itself and that
+the API user is within `$conf['remoteuser']`.
 
 ### The manifest
 

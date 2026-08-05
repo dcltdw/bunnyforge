@@ -155,7 +155,19 @@ class RpcClient:
         # machinery never copies it onto a redirected request — so the
         # credential cannot follow a redirect even if this module were one
         # day reached through the default opener.
+        #
+        # Both credential headers are sent, verified live (2026-08-05)
+        # against a host running PHP as CGI/FastCGI: Apache strips the
+        # Authorization header there before PHP ever runs, so a Bearer-only
+        # client is silently treated as anonymous — not a wiki config
+        # problem, and no amount of .htaccess or preload.php tuning fixes it
+        # from this side. X-DokuWiki-Token is not special-cased by Apache and
+        # arrives intact; DokuWiki's auth_tokenlogin() also prefers it over
+        # Authorization when both are present. Sending both is strictly more
+        # compatible than either alone, and costs nothing on a host where
+        # Authorization already works fine.
         request.add_unredirected_header("Authorization", f"Bearer {self._token}")
+        request.add_unredirected_header("X-DokuWiki-Token", self._token)
         raw = self._transport(request, self._timeout)
         try:
             obj = json.loads(raw.decode("utf-8"))
@@ -170,13 +182,26 @@ class RpcClient:
 
     def get_page(self, page_id: str) -> str | None:
         """Current wiki text, or None for a page that does not exist.
-        Error 121 is a state, not a failure — translated here, never shown."""
+
+        Verified live (2026-08-05) against a real 2026-07-14a "Mort" install,
+        JSON-RPC API version 14: a missing page returns "" with a *success*
+        error object — {"code": 0, "message": "success"} — and error 121
+        never occurs at all on that build. The 121 branch is kept for older
+        builds that may still raise it; it costs nothing to keep.
+
+        Treating "" as "does not exist" is safe, not a heuristic:
+        core.savePage refuses to create an empty page (error 132) — the
+        exact reason the render half translates a zero-byte placeholder to
+        ~~NOTOC~~ before upload. A page cannot simultaneously be empty and
+        exist, so "" unambiguously means "does not exist".
+        """
         try:
-            return self.call("core.getPage", {"page": page_id})
+            text = self.call("core.getPage", {"page": page_id})
         except RpcError as exc:
             if exc.code == 121:
                 return None
             raise
+        return text if text else None
 
     def save_page(self, page_id: str, text: str,
                   summary: str = SAVE_SUMMARY) -> None:
@@ -205,10 +230,28 @@ def translate_error(err: RpcError, wiki_url: str) -> str:
         return ("your wiki's remote API is disabled; set "
                 "$conf['remote'] = 1 in conf/local.php, not "
                 "conf/dokuwiki.php (which upgrades overwrite).")
+    if code == -32603:
+        # Not authenticated: DokuWiki's JsonRpcServer.php raises this (HTTP
+        # 401) when the request carried no usable credential at all —
+        # $INPUT->server has no REMOTE_USER. Verified live (2026-08-05): a
+        # host running PHP as CGI/FastCGI strips the Authorization header
+        # before PHP ever sees it, so a Bearer-only client is silently
+        # anonymous there — common and non-obvious enough to name outright.
+        return ("not authenticated: the wiki received no usable credential — "
+                "some hosts strip the Authorization header when PHP runs as "
+                "CGI/FastCGI (bunnyforge also sends X-DokuWiki-Token, which "
+                "usually survives that). Check the token "
+                "(BUNNYFORGE_WIKI_TOKEN or <workspace>/.bunnyforge/wiki-token) "
+                "and that the API user is within $conf['remoteuser'].")
     if code == -32604:
-        return ("not authorized: check the token (BUNNYFORGE_WIKI_TOKEN or "
-                "<workspace>/.bunnyforge/wiki-token) and that the API user "
-                "is within $conf['remoteuser'].")
+        # Authenticated but forbidden: JsonRpcServer.php raises this (HTTP
+        # 403) when $INPUT->server *does* have REMOTE_USER — the credential
+        # was accepted, this user just may not call the method. Previously
+        # mapped to "check the token", which named the wrong layer; the live
+        # source above resolves the ambiguity the spec had deferred.
+        return ("authenticated but forbidden: this user may not call this "
+                "method — check $conf['remoteuser'] and the wiki's ACL for "
+                "the deploy user.")
     if code == 111:
         return ("the wiki's ACL denies this user here — grant the deploy "
                 "user edit on the campaign namespace.")

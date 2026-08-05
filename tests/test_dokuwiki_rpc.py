@@ -49,6 +49,21 @@ class TestRequestShape(unittest.TestCase):
         self.assertEqual(request.unredirected_hdrs.get("Authorization"),
                          "Bearer tok123")
         self.assertNotIn("Authorization", request.headers)
+        # X-DokuWiki-Token rides alongside Authorization (both verified live,
+        # 2026-08-05): some hosts strip the Authorization header when PHP
+        # runs as CGI/FastCGI, so a Bearer-only client is silently
+        # unauthenticated there. X-DokuWiki-Token is not special-cased by
+        # Apache and DokuWiki prefers it over Authorization when both are
+        # present — so sending both is strictly more compatible than either
+        # alone. Same unredirected-header treatment, same reason: a
+        # credential must never ride a redirect.
+        # http.client capitalizes a header key as key.capitalize() — first
+        # character up, everything else down — so "X-DokuWiki-Token" is
+        # stored (and must be looked up) as "X-dokuwiki-token".
+        self.assertEqual(request.get_header("X-dokuwiki-token"), "tok123")
+        self.assertEqual(request.unredirected_hdrs.get("X-dokuwiki-token"),
+                         "tok123")
+        self.assertNotIn("X-dokuwiki-token", request.headers)
         self.assertEqual(request.get_header("Content-type"), "application/json")
         self.assertTrue(request.get_header("User-agent").startswith("bunnyforge/"))
         self.assertEqual(json.loads(request.data.decode("utf-8")), {"page": "a:b"})
@@ -98,9 +113,38 @@ class TestSuccessShapes(unittest.TestCase):
 
 class TestWrappers(unittest.TestCase):
     def test_get_page_121_is_none(self):
+        # Older DokuWiki builds may still raise 121 for a missing page — kept
+        # even though the live API-14 install (below) no longer does.
         body = json.dumps({"error": {"code": 121, "message": "absent"}}).encode()
         c = RpcClient("https://w", "t", transport=fake_transport([body]))
         self.assertIsNone(c.get_page("a:b"))
+
+    def test_get_page_empty_result_is_none(self):
+        # Verified live against a real 2026-07-14a "Mort" install, JSON-RPC
+        # API version 14 (2026-08-05): core.getPage on a missing page ID
+        # returns "" with a *success* error object, {"code": 0, "message":
+        # "success"} — 121 is never raised at all. DokuWiki cannot hold an
+        # empty page (core.savePage refuses to create one with error 132,
+        # which is exactly why the render half translates a zero-byte
+        # placeholder to ~~NOTOC~~ before upload), so a page cannot
+        # simultaneously be empty and exist — "" unambiguously means "does
+        # not exist".
+        body = json.dumps(
+            {"result": "", "error": {"code": 0, "message": "success"}}).encode()
+        c = RpcClient("https://w", "t", transport=fake_transport([body]))
+        self.assertIsNone(c.get_page("a:b"))
+
+    def test_get_page_empty_result_bare_is_none(self):
+        # Same empty-string case with `error` entirely absent (one of the
+        # three success shapes `call` already accepts).
+        c = RpcClient("https://w", "t", transport=fake_transport([ok("")]))
+        self.assertIsNone(c.get_page("a:b"))
+
+    def test_get_page_nonempty_result_returns_text(self):
+        # Guards the empty-string fix from over-firing: real content must
+        # still come back verbatim.
+        c = RpcClient("https://w", "t", transport=fake_transport([ok("real text")]))
+        self.assertEqual(c.get_page("a:b"), "real text")
 
     def test_get_page_other_error_propagates(self):
         body = json.dumps({"error": {"code": 111, "message": "acl"}}).encode()
@@ -241,7 +285,8 @@ class TestRedirectRefusal(unittest.TestCase):
     def test_a_real_client_request_carries_no_redirectable_token(self):
         # Belt to _NoRedirect's braces, checked on a request the client
         # actually built: even handed to the stock handler, there is no
-        # Authorization header for it to forward.
+        # Authorization or X-DokuWiki-Token header for it to forward — both
+        # credential headers get the same unredirected treatment.
         t = fake_transport([ok("x")])
         RpcClient("https://<wiki>", "tok123", transport=t).call("core.getPage", {})
         sent = t.calls[0][0]
@@ -251,10 +296,13 @@ class TestRedirectRefusal(unittest.TestCase):
             "http://<other-host>/collect")
         self.assertNotIn("Authorization", new.headers)
         self.assertNotIn("Authorization", new.unredirected_hdrs)
-        # ...while the wire request do_open assembles still carries it.
+        self.assertNotIn("X-dokuwiki-token", new.headers)
+        self.assertNotIn("X-dokuwiki-token", new.unredirected_hdrs)
+        # ...while the wire request do_open assembles still carries both.
         wire = dict(sent.unredirected_hdrs)
         wire.update({k: v for k, v in sent.headers.items() if k not in wire})
         self.assertEqual(wire["Authorization"], "Bearer tok123")
+        self.assertEqual(wire["X-dokuwiki-token"], "tok123")
 
     def test_stdlib_default_would_have_leaked_the_token(self):
         # Pins the reason this module refuses redirects at all: if a future
@@ -329,9 +377,27 @@ class TestTranslation(unittest.TestCase):
         self.check(-32605, "$conf['remote'] = 1", "conf/local.php",
                    "conf/dokuwiki.php")
 
-    def test_32604_names_both_token_sources(self):
-        self.check(-32604, "BUNNYFORGE_WIKI_TOKEN", ".bunnyforge/wiki-token",
-                   "remoteuser")
+    def test_32603_names_stripped_authorization_header(self):
+        # -32603 = not authenticated: DokuWiki's JsonRpcServer.php raises this
+        # (HTTP 401) when $INPUT->server has no REMOTE_USER at all — the
+        # request carried no usable credential. Verified live (2026-08-05):
+        # a host running PHP as CGI/FastCGI strips the Authorization header
+        # before PHP ever sees it, so a Bearer-only client is silently
+        # unauthenticated there. Names both token sources and remoteuser,
+        # since the cause is common and non-obvious.
+        self.check(-32603, "BUNNYFORGE_WIKI_TOKEN", ".bunnyforge/wiki-token",
+                   "remoteuser", "CGI", "Authorization")
+
+    def test_32604_names_forbidden_and_acl(self):
+        # -32604 = authenticated but forbidden: JsonRpcServer.php raises this
+        # (HTTP 403) when $INPUT->server *does* have REMOTE_USER — the
+        # credential was accepted, this user just may not call the method.
+        # Previously mapped to "check the token", which named the wrong
+        # layer entirely; corrected now that the live source resolves the
+        # ambiguity the spec had deferred (2026-08-05).
+        self.check(-32604, "remoteuser", "forbidden")
+        msg = self.check(-32604)
+        self.assertNotIn("BUNNYFORGE_WIKI_TOKEN", msg)
 
     def test_111_names_acl(self):
         self.check(111, "ACL", "edit")
