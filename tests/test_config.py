@@ -397,6 +397,35 @@ class TestWikiConfig(unittest.TestCase):
         with self.assertRaises(_config.ConfigError):
             self._load('[campaign]\nnamespace = "test"\n[wiki]\nurl = 7\n')
 
+    def test_wiki_install_root_parsed(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n'
+                         '[wiki]\ninstall_root = "/path/to/a/wiki/copy"\n')
+        self.assertEqual(cfg.wiki_install_root, "/path/to/a/wiki/copy")
+
+    def test_wiki_install_root_absent_is_none(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n[wiki]\n'
+                         'url = "https://<wiki>"\n')
+        self.assertIsNone(cfg.wiki_install_root)
+
+    def test_wiki_table_absent_install_root_is_none(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n')
+        self.assertIsNone(cfg.wiki_install_root)
+
+    def test_wiki_install_root_non_string_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\ninstall_root = 7\n')
+
+    def test_wiki_url_and_install_root_both_parsed(self):
+        # The two keys are independent — one names where the RPC transport
+        # talks to, the other a local filesystem copy for the `wiki` review
+        # suite — so setting both must not make either one clobber the other.
+        cfg = self._load('[campaign]\nnamespace = "test"\n[wiki]\n'
+                         'url = "https://<wiki>"\n'
+                         'install_root = "/path/to/a/wiki/copy"\n')
+        self.assertEqual(cfg.wiki_url, "https://<wiki>")
+        self.assertEqual(cfg.wiki_install_root, "/path/to/a/wiki/copy")
+
     def test_wiki_non_table_refused(self):
         # `wiki = "x"` must precede any table header, same TOML-scoping trap
         # noted in TestConfigLoad.test_names_section_must_be_a_table: a bare

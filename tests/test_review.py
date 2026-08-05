@@ -1,8 +1,10 @@
 import contextlib
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bunnyforge import _common
 from bunnyforge import _config
@@ -815,11 +817,20 @@ class TestWikiSuiteWiring(unittest.TestCase):
         self.assertEqual(registered, in_suites)
 
     def test_the_wiki_suite_requires_wiki_root(self):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = review.main(["wiki"])
-        self.assertEqual(rc, 1)
-        self.assertIn("--wiki-root", err.getvalue())
+        # No --wiki-root and no [wiki] install_root in campaign.toml: the
+        # instructional error must name both routes. A real workspace is
+        # needed here (--wiki-root's absence can only be resolved against
+        # config once the workspace holding that config is known), so this
+        # uses an explicit one rather than relying on ambient cwd/env.
+        with tempfile.TemporaryDirectory() as d:
+            ws = make_workspace(Path(d), {})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws)])
+            self.assertEqual(rc, 1)
+            self.assertIn("--wiki-root", err.getvalue())
+            self.assertIn("install_root", err.getvalue())
+            self.assertIn("campaign.toml", err.getvalue())
 
     def test_a_bad_wiki_root_is_one_error_line_not_a_traceback(self):
         with tempfile.TemporaryDirectory() as d:
@@ -830,3 +841,56 @@ class TestWikiSuiteWiring(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("error:", err.getvalue())
             self.assertNotIn("Traceback", err.getvalue())
+
+    def test_configured_install_root_used_when_flag_absent(self):
+        # --wiki-root absent, [wiki] install_root set: the configured path
+        # is used. Proven without a real DokuWiki install by pointing at a
+        # nonexistent directory and checking that _dokuwiki_install's own
+        # (already-instructional) refusal names that exact path — evidence
+        # the configured value, not some other default, reached check_root.
+        with tempfile.TemporaryDirectory() as d:
+            configured = str(Path(d) / "configured-wiki-copy")
+            ws = make_workspace(Path(d) / "ws", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 f'[wiki]\ninstall_root = "{configured}"\n'})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws)])
+            self.assertEqual(rc, 1)
+            self.assertIn(configured, err.getvalue())
+
+    def test_flag_overrides_configured_install_root(self):
+        # Explicit beats configured: when both are present, --wiki-root
+        # wins. Distinguished the same way as above — two different
+        # nonexistent paths, and only the flag's should appear in the error.
+        with tempfile.TemporaryDirectory() as d:
+            configured = str(Path(d) / "configured-wiki-copy")
+            flagged = str(Path(d) / "flagged-wiki-copy")
+            ws = make_workspace(Path(d) / "ws", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 f'[wiki]\ninstall_root = "{configured}"\n'})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws),
+                                  "--wiki-root", flagged])
+            self.assertEqual(rc, 1)
+            self.assertIn(flagged, err.getvalue())
+            self.assertNotIn(configured, err.getvalue())
+
+    def test_configured_install_root_expands_tilde(self):
+        # The CLI already expands ~ and resolves --wiki-root; the configured
+        # value must get the same treatment rather than being handed to
+        # check_root as a literal "~/...".
+        with tempfile.TemporaryDirectory() as home:
+            ws = make_workspace(Path(home) / "ws", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 '[wiki]\ninstall_root = '
+                                 '"~/configured-wiki-copy"\n'})
+            expected = str(Path(home) / "configured-wiki-copy")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {"HOME": home}, clear=False), \
+                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws)])
+            self.assertEqual(rc, 1)
+            self.assertNotIn("~", err.getvalue())
+            self.assertIn(expected, err.getvalue())

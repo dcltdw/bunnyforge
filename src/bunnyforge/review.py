@@ -489,28 +489,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--wiki-root", metavar="PATH",
         help="DokuWiki installation root (the directory holding conf/ and "
-             "lib/). Required by the 'wiki' suite; ignored by every other.")
+             "lib/). Required by the 'wiki' suite (or set [wiki] "
+             "install_root in campaign.toml); ignored by every other.")
     args = parser.parse_args(argv)
 
     if args.suite not in SUITES:
         parser.error(f"unknown suite: {args.suite}. Known: {', '.join(SUITES)}")
-
-    # Required conditionally rather than globally: making --wiki-root
-    # mandatory would break checkup, which never touches a wiki.
-    wiki_root = None
-    if any(name in _NEEDS_WIKI for name in SUITES[args.suite]):
-        if not args.wiki_root:
-            print(f"error: the '{args.suite}' suite needs --wiki-root PATH "
-                  f"(the DokuWiki installation root, holding conf/ and lib/)",
-                  file=sys.stderr)
-            return 1
-        wiki_root = Path(args.wiki_root).expanduser().resolve()
 
     try:
         ws = resolve_workspace(args.workspace)
     except (WorkspaceError, ConfigError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    # Required conditionally rather than globally: making a wiki root
+    # mandatory would break checkup, which never touches a wiki. Resolved
+    # after the workspace, not before, since the configured fallback lives
+    # in that workspace's campaign.toml — --wiki-root still wins when given.
+    wiki_root = None
+    if any(name in _NEEDS_WIKI for name in SUITES[args.suite]):
+        configured = ws.config.wiki_install_root
+        if args.wiki_root:
+            wiki_root = Path(args.wiki_root).expanduser().resolve()
+        elif configured:
+            wiki_root = Path(configured).expanduser().resolve()
+        else:
+            print(f"error: the '{args.suite}' suite needs --wiki-root PATH "
+                  f"(the DokuWiki installation root, holding conf/ and "
+                  f"lib/), or [wiki] install_root in campaign.toml",
+                  file=sys.stderr)
+            return 1
 
     try:
         findings = run_suite(args.suite, ws, wiki_root)
