@@ -1044,5 +1044,141 @@ class TestApplyDeploy(unittest.TestCase):
             self.assertNotIn("w:gone", deploy_export.load_manifest(mpath))
 
 
+def make_workspace(d: Path) -> Path:
+    (d / "campaign.toml").write_text(_MINIMAL_CAMPAIGN_TOML, encoding="utf-8")
+    return d
+
+
+class TestDriftCopies(unittest.TestCase):
+    def test_copies_mirror_pages_layout_and_dir_recreated(self):
+        with tempfile.TemporaryDirectory() as d:
+            drift = Path(d) / "wiki-drift"
+            stale = drift / "old.txt"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("stale", encoding="utf-8")
+            deploy_export.write_drift_copies(
+                {"w:npcs:ana": "wiki text\n"}, drift)
+            self.assertFalse(stale.exists())  # recreated from empty
+            copy = drift / "w" / "npcs" / "ana.txt"
+            self.assertEqual(copy.read_text(encoding="utf-8"), "wiki text\n")
+
+
+class TestRunDeploy(unittest.TestCase):
+    def _stage(self, d: Path, pages: dict) -> Path:
+        staging = d / "stage"
+        for pid, text in pages.items():
+            p = deploy_export.page_path(pid, staging)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+        return staging
+
+    def _run(self, ws_root, staging, client, go=False, overwrite=()):
+        ws = _config.open_workspace(ws_root)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            rc = deploy_export.run_deploy(
+                ws, staging, client, go, set(overwrite), "https://<wiki>")
+        return rc, out.getvalue()
+
+    def test_dry_run_is_default_shape_no_writes_no_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "hello\n"})
+            client = FakeClient()
+            rc, out = self._run(d, staging, client, go=False)
+            self.assertEqual(rc, 0)
+            self.assertEqual(client.saves, [])  # zero wiki writes
+            self.assertFalse(
+                (d / ".bunnyforge" / "wiki-manifest.json").exists())
+            self.assertIn("new", out)  # the full plan is printed
+
+    def test_go_writes_and_persists_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "hello\n"})
+            client = FakeClient()
+            rc, _ = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(client.saves, ["test:npcs:ana"])
+            manifest = deploy_export.load_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json")
+            self.assertIn("test:npcs:ana", manifest)
+
+    def test_drift_held_diffed_copied_and_nonzero_in_both_modes(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "ours\n"})
+            client = FakeClient({"test:npcs:ana": "theirs\n"})
+            for go in (False, True):
+                with self.subTest(go=go):
+                    rc, out = self._run(d, staging, client, go=go)
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(client.saves, [])
+                    self.assertIn("wiki (current)", out)   # unified diff sides
+                    self.assertIn("deploy (target)", out)
+                    self.assertIn("--overwrite", out)      # resolution path
+                    copy = (d / ".bunnyforge" / "wiki-drift" / "test" /
+                            "npcs" / "ana.txt")
+                    self.assertEqual(copy.read_text(encoding="utf-8"),
+                                     "theirs\n")
+
+    def test_deleted_on_wiki_held_and_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "ours\n"})
+            deploy_export.save_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json",
+                {"test:npcs:ana": "somehash"})
+            client = FakeClient()  # page absent on wiki
+            rc, out = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 1)
+            self.assertEqual(client.saves, [])
+            self.assertIn("deleted", out)
+
+    def test_orphan_reported_never_deleted_nonzero(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "x\n"})
+            client = FakeClient({"test:npcs:ana": "x\n",
+                                 "test:npcs:retired": "old\n"})
+            deploy_export.save_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json",
+                {"test:npcs:ana": deploy_export.page_hash("x\n"),
+                 "test:npcs:retired": deploy_export.page_hash("old\n")})
+            rc, out = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 1)
+            self.assertIn("test:npcs:retired", out)
+            self.assertIn("manual", out)  # removal is a manual act
+            self.assertIn("test:npcs:retired", client.pages)  # never deleted
+
+    def test_resume_after_crash_adopts_and_exits_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "same\n"})
+            client = FakeClient({"test:npcs:ana": "same\n"})
+            deploy_export.save_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json",
+                {"test:npcs:ana": "stale-pre-crash-hash"})
+            rc, out = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(client.saves, [])
+            self.assertIn("adopt", out)
+
+    def test_drift_dir_recreated_each_planning_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            stale = d / ".bunnyforge" / "wiki-drift" / "stale.txt"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("old", encoding="utf-8")
+            staging = self._stage(d, {"test:npcs:ana": "x\n"})
+            client = FakeClient({"test:npcs:ana": "x\n"})
+            deploy_export.save_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json",
+                {"test:npcs:ana": deploy_export.page_hash("x\n")})
+            rc, _ = self._run(d, staging, client)
+            self.assertEqual(rc, 0)
+            self.assertFalse(stale.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

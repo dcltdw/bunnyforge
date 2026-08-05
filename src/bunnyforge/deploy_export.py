@@ -27,8 +27,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
+import shutil
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -531,6 +533,123 @@ def apply_deploy(plan: DeployPlan, staged: dict[str, str], client,
         written.append(pid)
 
     return ApplyResult(written, sorted(adopted), None, [])
+
+
+_HELD_REASONS = {
+    "drift": "changed on the wiki since the last deploy",
+    "drift-manual-era": "no baseline for it — could be hand-edits from the "
+                        "manual era",
+    "deleted-on-wiki": "a human deleted it on the wiki; recreating it would "
+                       "clobber that decision",
+}
+
+
+def write_drift_copies(held: dict[str, str], drift_dir: Path) -> None:
+    """Each drifted page's current wiki text, laid out like data/pages/, for
+    manual merge. The tool owns this directory outright: recreated from empty
+    every planning run, so a page that stops drifting leaves no stale copy."""
+    if drift_dir.exists():
+        shutil.rmtree(drift_dir)
+    drift_dir.mkdir(parents=True)
+    for pid, wiki_text in held.items():
+        dest = page_path(pid, drift_dir)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(wiki_text, encoding="utf-8")
+
+
+def format_deploy_report(plan: DeployPlan, staged: dict[str, str],
+                         overwrite: set[str], go: bool) -> tuple[list[str], bool]:
+    lines: list[str] = []
+    held_pages = []
+    for pid in sorted(plan.pages):
+        p = plan.pages[pid]
+        if p.action in _HELD and pid not in overwrite:
+            held_pages.append(pid)
+            continue
+        word = "overwrite" if pid in overwrite else p.action
+        lines.append(f"  {word:<12} {pid}")
+    for pid in plan.refused:
+        lines.append(f"  refused      {pid}  (protected page — never written)")
+
+    for pid in held_pages:
+        p = plan.pages[pid]
+        lines.append(f"\n  HELD  {pid} — {_HELD_REASONS[p.action]}")
+        if p.wiki_text is not None:
+            diff = difflib.unified_diff(
+                p.wiki_text.splitlines(keepends=True),
+                staged[pid].splitlines(keepends=True),
+                fromfile="wiki (current)", tofile="deploy (target)")
+            lines.extend("    " + line.rstrip("\n") for line in diff)
+    if held_pages:
+        lines.append(
+            "\nHeld-back pages: pull the wiki edit into the workspace source "
+            "(the next render then matches and the drift disappears), or "
+            "re-run with --overwrite <page-id> --go to clobber that page "
+            "and re-baseline it. Current wiki text saved under "
+            f"{DRIFT_DIR}/ for manual merge.")
+
+    for pid in plan.orphans:
+        lines.append(
+            f"  orphan       {pid} — in the manifest but no longer staged; "
+            "removing the wiki page is a manual act, this tool never "
+            "deletes.")
+    for pid in plan.resolved_orphans:
+        lines.append(
+            f"  resolved     {pid} — deleted on the wiki; "
+            + ("dropped from the manifest." if go else
+               "will drop from the manifest on --go."))
+
+    held_or_orphaned = bool(held_pages or plan.orphans)
+    return lines, held_or_orphaned
+
+
+def run_deploy(ws, staging: Path, client, go: bool, overwrite: set[str],
+               wiki_url: str) -> int:
+    """Plan, report, copy drift, and (with go) apply. Exit-code contract:
+    non-zero if anything was held back or any orphan was reported, in both
+    modes — matching the render half's fail-loudly posture."""
+    base = ws.config.namespace
+    manifest_path = ws.root / MANIFEST_FILE
+    manifest = load_manifest(manifest_path)
+    staged = staged_pages(staging)
+
+    try:
+        plan = plan_deploy(staged, manifest, client.get_page, base)
+    except RpcError as exc:
+        print(f"error: {translate_error(exc, wiki_url)}", file=sys.stderr)
+        return 1
+
+    held = {pid: p.wiki_text for pid, p in plan.pages.items()
+            if p.action in _HELD and pid not in overwrite
+            and p.wiki_text is not None}
+    # Copies are part of reporting, not deployment: written in both modes.
+    write_drift_copies(held, ws.root / DRIFT_DIR)
+
+    lines, held_or_orphaned = format_deploy_report(plan, staged, overwrite, go)
+    print("\n".join(lines))
+
+    if go:
+        result = apply_deploy(plan, staged, client, manifest, manifest_path,
+                              overwrite, base, wiki_url)
+        for pid in result.written:
+            print(f"  saved        {pid}")
+        if result.failure:
+            print(f"\nerror: {result.failure}", file=sys.stderr)
+            print(f"Written before the failure: "
+                  f"{', '.join(result.written) or 'nothing'}.\n"
+                  f"Not yet written: {', '.join(result.remaining)}.\n"
+                  "Re-run to converge — already-written pages classify as "
+                  "unchanged or adopt.", file=sys.stderr)
+            return 1
+        print(f"\nDeployed {len(result.written)} page(s), "
+              f"adopted {len(result.adopted)}.")
+    else:
+        writes = sum(1 for pid, p in plan.pages.items()
+                     if p.action in ("new", "update") or pid in overwrite)
+        print(f"\nDry run: {writes} page(s) would be written. "
+              "Re-run with --go to deploy.")
+
+    return 1 if held_or_orphaned else 0
 
 
 if __name__ == "__main__":
