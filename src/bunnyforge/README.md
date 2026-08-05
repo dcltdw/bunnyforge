@@ -529,6 +529,54 @@ goes in `_NEEDS_WORKSPACE`; one needing a DokuWiki install root goes in
 `_NEEDS_WIKI`. The agent-judgment half of the checkup lives in
 `checks/checkup.md`.
 
+### Accepting a finding
+
+A check that reports a finding the operator has already judged and accepted
+reports it forever, exits non-zero on every future run, and eventually trains
+the operator to stop reading the summary — at which point the next *real*
+finding gets lost in the noise. Record that judgement in `campaign.toml`:
+
+```toml
+[[review.accepted]]
+check  = "wiki-acl"
+file   = "conf/acl.auth.php"
+match  = "<ns>:* grants to a group"
+reason = "Intentional: account creation is restricted, so any logged-in account is a small trusted set."
+```
+
+All four keys are required, and `reason` must be non-empty — `load()` refuses
+an entry missing either, naming the offending entry, because an acceptance
+with no rationale is indistinguishable from a mistake six months later. A
+finding is accepted when `check` and `file` match exactly and `match` is a
+**substring** of the finding's message (substring rather than the whole
+message, so a reworded but otherwise-unchanged message doesn't silently
+un-accept a judgement).
+
+**This accepts one specific finding, never a check.** Only a finding whose
+check, file, and message substring all match is excluded; a *different*
+finding from the same check — a new file, a new scope, a new namespace — still
+reports and still fails the run. Wholesale-silencing `wiki-acl` would hide the
+next namespace that gets it wrong; the unit of acceptance is deliberately the
+finding, not the check.
+
+Accepted findings never vanish: they're excluded from the exit code and from
+each check's issue count, but listed in their own `Accepted` section of both
+the terminal and HTML report, each with its recorded reason — so the decision
+stays visible instead of quietly disappearing. If one acceptance's `match`
+turns out to cover more than one finding this run, that finding count is
+reported alongside it, so an operator can see a loose `match` covering more
+than intended. And if an acceptance matches nothing this run — the config it
+described has since changed — it's reported as a `warn`-severity finding
+under a synthetic `review-accepted` check, so a stale judgement surfaces
+rather than sitting invisibly forever; being `warn` rather than `error`, it
+never reddens the run on its own.
+
+The mechanism applies to every suite (`checkup`, `wiki`, and any future one),
+not just `wiki` — one mechanism is easier to explain than a per-suite variant.
+An acceptance whose `check` belongs to a suite that isn't currently running is
+simply not evaluated (neither matched nor reported stale) — a `wiki-acl`
+acceptance sitting unused during a `checkup` run doesn't spuriously warn.
+
 ### The `wiki` suite
 
     python3 -m bunnyforge.review wiki --wiki-root /path/to/dokuwiki
