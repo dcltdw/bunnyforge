@@ -22,7 +22,8 @@ then runs this script to gain confidence *before* pointing the real
 lets a culture author gain confidence before publishing a name file. Two
 genuine bugs were found this way during this feature's first live deploy
 (both fixed, both now permanent assertions here so they can never silently
-regress):
+regress), and a third property -- unconfirmed until issue #12 -- is now a
+permanent check too:
 
   1. `get_page()` on a missing page must return None. On the API v14 install
      this was verified against, a missing page comes back as an EMPTY STRING
@@ -34,6 +35,13 @@ regress):
      does not re-test that directly (it is a header the client always sends,
      not something observable from here), but the very fact that check 1's
      handshake succeeds at all is live proof the credential got through.
+  3. A rewritten absolute link — `[[<ns>:<dir>:<stem>|label]]`, no leading
+     colon, the form `deploy_export`'s `rewrite_wikilinks` emits — must
+     resolve from the wiki root when followed from *inside* an included
+     page, not just from the page whose ID it was written relative to.
+     Reader-facing pages are wrappers made only of `{{page>}}` includes, so
+     a reader always clicks such a link from inside an include (see check
+     12).
 
 WHAT IT DOES NOT PROVE. This tool cannot delete wiki pages, so this script
 cannot either — it never claims to. It cannot check that the `~~NOTOC~~`
@@ -44,7 +52,7 @@ built around one property that makes it safe to run repeatedly — see below.
 SAFETY. Three separate guarantees, each load-bearing:
 
   - **Never runs by accident.** Checks 1-3 are read-only and always run.
-    Checks 4-11 write to the wiki and run ONLY with the explicit --go flag,
+    Checks 4-12 write to the wiki and run ONLY with the explicit --go flag,
     matching this package's dry-run/--go convention everywhere else.
   - **Never touches the operator's real deploy state.** The real
     `<workspace>/.bunnyforge/wiki-manifest.json` is a committed baseline for
@@ -70,9 +78,10 @@ Usage:
         protected-page guard. Writes nothing to the wiki.
 
     python3 tests/live_wiki_check.py --workspace PATH --go
-        All checks (1-11), including the roundtrip-edit, drift-holdback,
-        --overwrite, adopt, and empty-page/placeholder checks. Writes to
-        the live wiki named in PATH/campaign.toml's [wiki] url.
+        All checks (1-12), including the roundtrip-edit, drift-holdback,
+        --overwrite, adopt, empty-page/placeholder, and included-link-
+        resolution checks. Writes to the live wiki named in
+        PATH/campaign.toml's [wiki] url.
 
     python3 tests/live_wiki_check.py --wiki-url URL --namespace NS [--go]
         Same checks, run with no campaign workspace at all -- for CI, or
@@ -97,11 +106,14 @@ import re
 import shutil
 import sys
 import tempfile
+import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 
 from bunnyforge import _config
 from bunnyforge import deploy_export
 from bunnyforge._dokuwiki import page_id as _page_id
+from bunnyforge._dokuwiki import wrapper_text as _wrapper_text
 from bunnyforge._dokuwiki_rpc import RpcClient, RpcError
 
 # ---------------------------------------------------------------------------
@@ -114,6 +126,12 @@ from bunnyforge._dokuwiki_rpc import RpcClient, RpcError
 PROBE_DIR = "live-wiki-check"
 PROBE_STEM = "probe"
 PROBE_REL_PATH = f"{PROBE_DIR}/{PROBE_STEM}.md"
+
+# Stable IDs for check 12's cross-linked pair. Two independent stems (not
+# reusing PROBE_STEM) so this check's pages never collide with checks 4-11's
+# probe page, letting both live under the same PROBE_DIR indefinitely.
+LINK_A_REL_PATH = f"{PROBE_DIR}/link-a.md"
+LINK_B_REL_PATH = f"{PROBE_DIR}/link-b.md"
 
 # Two source bodies for the same probe page. V1 is what checks 4/5 deploy and
 # confirm; V2 is what check 6 (the roundtrip *edit*, as opposed to check 4's
@@ -148,6 +166,26 @@ MANUAL_EDIT_BODY = (
     "If bunnyforge is working, this text survives the next deploy and is "
     "reported as held-back drift instead of being silently overwritten.\n"
 )
+
+
+def _link_probe_body(letter: str, target_wrapper_id: str) -> str:
+    """Content-page body for one half of check 12's link-a/link-b pair.
+
+    Carries an absolute wikilink to the OTHER page's WRAPPER, with no
+    leading colon -- exactly the shape deploy_export's rewrite_wikilinks
+    emits for a resolved, exported target. See check
+    check_absolute_link_resolves_in_include for why this is hand-written
+    rather than produced by driving deploy_export itself.
+    """
+    return (
+        f"# bunnyforge live-wiki-check link probe {letter}\n\n"
+        "This page is maintained by an opt-in diagnostic script "
+        "(tests/live_wiki_check.py in the bunnyforge repository) that "
+        "exercises included-link resolution against this wiki "
+        "installation. It is safe to ignore. It links to the other half "
+        f"of the pair: [[{target_wrapper_id}|the other probe page]].\n"
+    )
+
 
 # Actions plan_deploy can report that mean "held back, not written". Mirrors
 # deploy_export's own private _HELD tuple; kept as a local literal rather than
@@ -228,6 +266,13 @@ class Ctx:
         self.wrapper_id = _page_id(PROBE_REL_PATH, ns)
         self.players_id = _page_id(PROBE_REL_PATH, f"{ns}:players")
 
+        self.link_a_content_id = _page_id(LINK_A_REL_PATH, f"{ns}:export")
+        self.link_a_wrapper_id = _page_id(LINK_A_REL_PATH, ns)
+        self.link_a_players_id = _page_id(LINK_A_REL_PATH, f"{ns}:players")
+        self.link_b_content_id = _page_id(LINK_B_REL_PATH, f"{ns}:export")
+        self.link_b_wrapper_id = _page_id(LINK_B_REL_PATH, ns)
+        self.link_b_players_id = _page_id(LINK_B_REL_PATH, f"{ns}:players")
+
 
 # ---------------------------------------------------------------------------
 # Read-only checks (1-3) -- always run, never write to the wiki
@@ -300,8 +345,84 @@ def check_protected_guard(ns: str) -> str:
             "fetched, ruling out a guard that simply fetches nothing")
 
 
+class _Skipped(Exception):
+    """Raised by a check to report itself SKIPPED rather than PASSED or
+    FAILED. Reserved for a precondition genuinely outside this script's
+    control -- e.g. an optional RPC method absent on an older DokuWiki
+    release -- never for an assertion that could instead just fail."""
+
+
+class _AnchorCollector(HTMLParser):
+    """Collects every <a> tag's attributes from a fragment of rendered
+    DokuWiki HTML, in document order. A full HTML parser rather than a
+    regex because attribute order in DokuWiki's rendered <a> tags is not
+    part of any documented contract -- observed as
+    `class="..." title="..." data-wiki-id="..."` (existing target) or
+    `class="..." title="..." rel="nofollow" data-wiki-id="..."` (create-link)
+    against a live install, but nothing here should depend on that order
+    holding on every DokuWiki release."""
+
+    def __init__(self):
+        super().__init__()
+        self.anchors: list[dict[str, str | None]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.anchors.append(dict(attrs))
+
+
+def _href_page_id(href: str) -> str | None:
+    """The DokuWiki page ID a rendered <a href=...> targets, i.e. its `id`
+    query parameter -- e.g. "/dokuwiki/doku.php?id=ns:foo:bar" -> "ns:foo:bar".
+    None if href has no `id` parameter at all (an external link, an anchor,
+    etc). Uses urllib rather than a raw string search because DokuWiki does
+    not consistently percent-encode the colons in a page ID within the
+    query string, and parse_qs handles both forms."""
+    params = urllib.parse.parse_qs(urllib.parse.urlsplit(href).query)
+    ids = params.get("id")
+    return ids[0] if ids else None
+
+
+def _find_wikilink_among(html_text: str, candidate_ids) -> tuple[str | None, dict | None]:
+    """The first <a> tag in `html_text` whose href targets one of
+    `candidate_ids` as a DokuWiki page, as (matched_id, attrs) -- or
+    (None, None) if none of them appear as a link target anywhere at all,
+    which means the wikilink did not render as a link (it may have rendered
+    as literal bracketed text instead)."""
+    parser = _AnchorCollector()
+    parser.feed(html_text)
+    candidates = set(candidate_ids)
+    for attrs in parser.anchors:
+        target = _href_page_id(attrs.get("href", ""))
+        if target in candidates:
+            return target, attrs
+    return None, None
+
+
+def _method_unavailable(exc: RpcError) -> bool:
+    """True if `exc` looks like "this RPC method does not exist on this
+    install" rather than a genuine failure.
+
+    Verified live (2026-08-05): an unknown core.* method on that install
+    raises code -32603 with message "Method does not exist" -- the very
+    same code translate_error elsewhere in this package maps to "not
+    authenticated", so message text, not code, is what actually
+    distinguishes the two here. -32601 (the JSON-RPC 2.0 standard
+    method-not-found code) is accepted too, since another DokuWiki release
+    may use it instead. Trusting -32603 here is safe only because check 12
+    runs after checks 1-3 have already proven the credential works -- an
+    unauthenticated reading of that code would be a false one by this
+    point in the script.
+    """
+    if exc.code == -32601:
+        return True
+    if exc.code == -32603 and "does not exist" in exc.message.lower():
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
-# Write checks (4-11) -- only with --go
+# Write checks (4-12) -- only with --go
 # ---------------------------------------------------------------------------
 
 def check_create_or_update(ctx: Ctx) -> str:
@@ -555,14 +676,109 @@ def check_notoc_placeholder(ctx: Ctx) -> str:
             "from this script -- open the page in a browser to confirm.")
 
 
+def check_absolute_link_resolves_in_include(ctx: Ctx) -> str:
+    """12. A rewritten absolute link -- [[<ns>:<dir>:<stem>|label]], no
+    leading colon, exactly the form deploy_export's rewrite_wikilinks emits
+    -- must resolve from the wiki root when a reader follows it from INSIDE
+    an included page, not merely from the content page whose ID it was
+    written relative to. Reader-facing pages are wrappers made of nothing
+    but {{page>}} includes, so a reader always clicks such a link from
+    inside an include -- never confirmed before issue #12.
+
+    Deliberately does NOT drive deploy_export to produce these pages. The
+    render-side resolver (classify_target / rewrite_wikilinks) only rewrites
+    a link whose target exists in the REAL workspace's content index; these
+    two probe pages are synthetic fixtures with no corresponding files on
+    disk anywhere, so a real deploy run would refuse the link between them
+    outright (an unresolved target) rather than ever emit the rewritten
+    absolute form this check exists to exercise. What deploy_export computes
+    is already covered by its own offline unit tests; what has never been
+    checked is what DokuWiki itself does with an already-rewritten link once
+    it sits inside an include -- so this check hand-writes both the
+    rewritten link text and the wrapper shape deploy_export would have
+    produced (via the same wrapper_text() helper the render half uses), and
+    asks the live wiki to render it for real.
+    """
+    # Publish both halves of the pair first, each linking to the OTHER's
+    # WRAPPER -- absolute, no leading colon -- so that by the time either is
+    # rendered, both link targets already exist.
+    pairs = (
+        (ctx.link_a_content_id, ctx.link_a_wrapper_id, ctx.link_a_players_id,
+         "a", ctx.link_b_wrapper_id),
+        (ctx.link_b_content_id, ctx.link_b_wrapper_id, ctx.link_b_players_id,
+         "b", ctx.link_a_wrapper_id),
+    )
+    for content_id, wrapper_id, players_id, letter, target_wrapper_id in pairs:
+        ctx.client.save_page(content_id, _link_probe_body(letter, target_wrapper_id))
+        ctx.client.save_page(wrapper_id, _wrapper_text(content_id, players_id))
+
+    try:
+        html = ctx.client.call("core.getPageHTML", {"page": ctx.link_a_wrapper_id})
+    except RpcError as exc:
+        if _method_unavailable(exc):
+            raise _Skipped(
+                "core.getPageHTML is not available on this DokuWiki install "
+                f"({exc}) -- this check needs it to inspect rendered HTML "
+                "from inside an include, and an older wiki release should "
+                "not turn this canary red. Confirm this manually instead: "
+                f"open {ctx.link_a_wrapper_id} in a browser and click "
+                "through to the other probe page.") from exc
+        raise
+
+    assert isinstance(html, str) and html, (
+        f"core.getPageHTML({ctx.link_a_wrapper_id!r}) returned "
+        f"{html!r} -- expected non-empty rendered HTML")
+
+    matched_id, link = _find_wikilink_among(
+        html, (ctx.link_b_wrapper_id, ctx.link_b_content_id))
+    assert link is not None, (
+        f"no rendered link to {ctx.link_b_wrapper_id!r} (or its content "
+        f"page {ctx.link_b_content_id!r}) was found anywhere in "
+        f"{ctx.link_a_wrapper_id}'s rendered HTML -- the absolute wikilink "
+        "did not resolve to a link at all, which likely means it rendered "
+        "as literal bracketed text instead. This is a navigation defect: a "
+        "reader following this link from inside the include would see "
+        f"plain text, not a clickable link.\nrendered HTML:\n{html}")
+
+    assert matched_id == ctx.link_b_wrapper_id, (
+        f"the link inside {ctx.link_a_wrapper_id} resolved to "
+        f"{matched_id!r} -- the CONTENT page, not the reader-facing "
+        f"wrapper {ctx.link_b_wrapper_id!r}. This is a navigation defect: "
+        "a reader following it from inside the include would land on the "
+        "raw exported page instead of the wrapper meant for them.\n"
+        f"link markup: {link!r}")
+
+    classes = (link.get("class") or "").split()
+    assert "wikilink2" not in classes, (
+        f"the link inside {ctx.link_a_wrapper_id} to "
+        f"{ctx.link_b_wrapper_id!r} rendered as a CREATE-LINK (CSS class "
+        f"{link.get('class')!r}) -- DokuWiki believes the target wrapper "
+        "page does not exist. This is exactly the navigation defect issue "
+        "#12 asks about: an absolute link rewritten by deploy_export, "
+        "followed from inside an include, failing to resolve from the "
+        f"wiki root.\nlink markup: {link!r}")
+
+    return (f"the absolute link inside {ctx.link_a_wrapper_id} (rendered "
+            f"via an include) resolved to the wrapper "
+            f"{ctx.link_b_wrapper_id!r}, not its content page, and did not "
+            f"render as a create-link (class {link.get('class')!r})")
+
+
 # ---------------------------------------------------------------------------
 # Runner / report
 # ---------------------------------------------------------------------------
 
-def _run_one(name: str, fn, *args) -> tuple[bool, str]:
+def _run_one(name: str, fn, *args) -> tuple[bool | None, str]:
+    """Run one check, printing its report line. The tri-state result is
+    True (PASSED), False (FAILED), or None (SKIPPED -- a genuine
+    precondition outside this script's control was missing; see
+    _Skipped). Only False fails the overall run."""
     print(f"--- {name} ---")
     try:
         detail = fn(*args)
+    except _Skipped as exc:
+        print(f"SKIPPED: {exc}")
+        return None, str(exc)
     except AssertionError as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         return False, str(exc)
@@ -598,9 +814,10 @@ def main(argv: list[str] | None = None) -> int:
              "campaign.namespace. Must be paired with --wiki-url.")
     parser.add_argument(
         "--go", action="store_true",
-        help="Also run the write checks (4-11): create/update a probe page "
+        help="Also run the write checks (4-12): create/update a probe page "
              "on the live wiki, edit it, hold back drift, overwrite, adopt, "
-             "and probe two RPC edge cases. Without --go, only the "
+             "probe two RPC edge cases, and confirm a rewritten absolute "
+             "link resolves from inside an include. Without --go, only the "
              "read-only checks (1-3) run and nothing is written.")
     args = parser.parse_args(argv)
 
@@ -663,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"live_wiki_check: namespace={ns!r}, --go={args.go}\n")
 
-    results: list[tuple[str, bool]] = []
+    results: list[tuple[str, bool | None]] = []
     ok, _ = _run_one("1. handshake", check_handshake, client)
     results.append(("1. handshake", ok))
     ok, _ = _run_one("2. missing-page contract", check_missing_page_returns_none,
@@ -677,11 +894,11 @@ def main(argv: list[str] | None = None) -> int:
     touched_pages: list[str] = []
 
     if not args.go:
-        print("\nWrite checks (4-11) SKIPPED: pass --go to run them. Without "
+        print("\nWrite checks (4-12) SKIPPED: pass --go to run them. Without "
               "--go this script never writes to the wiki, matching the "
               "package-wide dry-run/--go convention.")
     elif not read_only_ok:
-        print("\nWrite checks (4-11) SKIPPED: a read-only check failed "
+        print("\nWrite checks (4-12) SKIPPED: a read-only check failed "
               "above. Fixing the misconfiguration it reports is safer than "
               "writing to a wiki this script cannot yet talk to correctly.",
               file=sys.stderr)
@@ -708,11 +925,13 @@ def main(argv: list[str] | None = None) -> int:
                 ("9. adopt / resume-after-crash", check_adopt_resume),
                 ("10. savePage refuses empty page", check_empty_page_refused),
                 ("11. ~~NOTOC~~ placeholder", check_notoc_placeholder),
+                ("12. absolute link resolves inside an include",
+                 check_absolute_link_resolves_in_include),
             ]
             for i, (name, fn) in enumerate(write_checks):
                 ok, _ = _run_one(name, fn, ctx)
                 results.append((name, ok))
-                if not ok:
+                if ok is False:
                     for skipped_name, _ in write_checks[i + 1:]:
                         print(f"--- {skipped_name} ---\nSKIPPED: an earlier "
                               "check failed and later checks assume its "
@@ -720,8 +939,12 @@ def main(argv: list[str] | None = None) -> int:
                         results.append((skipped_name, False))
                     break
 
-            touched_pages = [ctx.wrapper_id, ctx.content_id,
-                             f"{ns}:{PROBE_DIR}:placeholder-probe"]
+            touched_pages = [
+                ctx.wrapper_id, ctx.content_id,
+                f"{ns}:{PROBE_DIR}:placeholder-probe",
+                ctx.link_a_wrapper_id, ctx.link_a_content_id,
+                ctx.link_b_wrapper_id, ctx.link_b_content_id,
+            ]
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
             if real_token_env is None:
@@ -731,7 +954,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n--- summary ---")
     for name, ok in results:
-        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+        label = "PASS" if ok is True else ("SKIP" if ok is None else "FAIL")
+        print(f"  {label}  {name}")
 
     if touched_pages:
         print("\nPage(s) this run created or updated on the live wiki:")
@@ -740,7 +964,7 @@ def main(argv: list[str] | None = None) -> int:
         print("This tool cannot delete wiki pages -- removing them, if "
               "ever wanted, is a manual act on the wiki itself.")
 
-    passed = all(ok for _, ok in results)
+    passed = all(ok is not False for _, ok in results)
     print(f"\n{'PASSED' if passed else 'FAILED'}")
     return 0 if passed else 1
 
