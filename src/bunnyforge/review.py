@@ -382,6 +382,17 @@ def check_wiki_remote(files: list[FileRec], wiki_root: Path) -> list[Finding]:
             "remote is enabled but remoteuser is unset or empty — every "
             "wiki account can call the API; scope it to the deploy user in "
             "conf/local.php"))
+    elif ru.source not in _UPGRADE_SAFE_CONF:
+        # remoteuser holds the actual security boundary — remote merely
+        # turns the API on. A scoped value that lives outside local.php is
+        # one upgrade away from reverting to the stock placeholder, at
+        # which point every account regains API access, unremarked. Same
+        # failure the `remote` provenance rule above exists to prevent, on
+        # the more dangerous of the two settings.
+        out.append(Finding(
+            "error", "wiki-remote", f"conf/{ru.source}",
+            f"remoteuser is set but from {ru.source}, which DokuWiki "
+            f"upgrades overwrite — move it to conf/local.php"))
     return out
 
 

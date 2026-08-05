@@ -307,6 +307,7 @@ copy and CI never needs a live wiki. Universal rules, naming no campaign:
 |---|---|
 | `remote` enabled but `remoteuser` unset or empty — every wiki account can call the API | error |
 | `remote` enabled from `conf/dokuwiki.php` — one upgrade from silently reverting | error (mirrors the `useacl` provenance rule) |
+| `remoteuser` set to a real value but from `conf/dokuwiki.php` — one upgrade from reverting to the stock placeholder, handing every account the API back | error (the same provenance rule, applied to the setting that actually holds the security boundary; the placeholder case above wins when `!!not set!!` itself lives in `dokuwiki.php`) |
 | `remote` disabled | no finding — a disabled API is a legitimate secure state; the deploy's `-32605` translation owns that path |
 
 `remoteuser`'s stock value is the placeholder `!!not set!!`, which DokuWiki
@@ -366,16 +367,25 @@ mismatch), expecting PyPI index lag before the campaign repo can re-pin.
 Named here because no test can cover them; each is checked on the first real
 deploy before being trusted:
 
-1. `~~NOTOC~~` placeholder pages render blank and count as existing.
-2. The exact named-parameter spelling `core.savePage` expects in the
+1. `core.getPage` on a page ID that does not exist returns error **121**, not
+   an empty string. "Verified against the live target" only recorded that
+   `core.getPage` exists, never what it returns for a missing page; `get_page`
+   treats only error 121 as "no page", and three of the eight
+   classification-matrix rows depend on that. If the live install returns
+   `""` instead, `new` becomes `drift-manual-era` (the first deploy writes
+   nothing and holds every page back), `deleted-on-wiki` becomes `drift`, and
+   resolved orphans never resolve. Loud and non-destructive, but it is the
+   very first thing a user hits.
+2. `~~NOTOC~~` placeholder pages render blank and count as existing.
+3. The exact named-parameter spelling `core.savePage` expects in the
    simplified `PATH_INFO` form (verified against the live wiki, then pinned
    in the client's tests).
-3. The old spec's carried-forward item: a rewritten absolute link
+4. The old spec's carried-forward item: a rewritten absolute link
    (`[[<ns>:<dir>:<stem>|label]]`, no leading colon) resolves from the root
    when followed from *inside* an included page. First publication finally
    creates the wiki state needed to check it. Bounded risk: a navigation
    defect, not a leak — the link policy's refusals do not depend on it.
-4. The read-back hash equals a re-fetch a minute later (i.e. `get_page` is
+5. The read-back hash equals a re-fetch a minute later (i.e. `get_page` is
    stable after save; no lazy normalization on later reads).
 
 ## Out of scope, on the record
