@@ -836,6 +836,30 @@ class TestManifest(unittest.TestCase):
                 deploy_export.load_manifest(path)
             self.assertIn(str(path), str(ctx.exception))
 
+    def test_non_object_json_refused_instructionally(self):
+        # Valid JSON but not an object at all (e.g. a bare array) must not
+        # reach `raw.get(...)` — that would raise AttributeError instead of
+        # the instructional DeployError every malformed manifest owes.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "m.json"
+            path.write_text("[1, 2, 3]", encoding="utf-8")
+            with self.assertRaises(deploy_export.DeployError) as ctx:
+                deploy_export.load_manifest(path)
+            self.assertIn(str(path), str(ctx.exception))
+
+    def test_non_object_pages_refused_instructionally(self):
+        # A `pages` field that isn't a JSON object must be refused rather
+        # than silently misread — dict() of some non-dict shapes (e.g. a
+        # list of two-character strings) succeeds without error and would
+        # otherwise corrupt the read instead of refusing it.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "m.json"
+            path.write_text('{"version": 1, "pages": ["ab", "cd"]}',
+                            encoding="utf-8")
+            with self.assertRaises(deploy_export.DeployError) as ctx:
+                deploy_export.load_manifest(path)
+            self.assertIn(str(path), str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

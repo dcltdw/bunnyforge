@@ -372,12 +372,26 @@ def load_manifest(path: Path) -> dict[str, str]:
         raise DeployError(
             f"{path} is not valid JSON: {exc}. It is the deploy baseline — "
             "restore it from git rather than deleting it.") from exc
-    if not isinstance(raw, dict) or raw.get("version") != MANIFEST_VERSION:
+    if not isinstance(raw, dict):
+        raise DeployError(
+            f"{path} is not a JSON object — it is the deploy baseline. "
+            "Restore it from git rather than deleting it.")
+    if raw.get("version") != MANIFEST_VERSION:
         raise DeployError(
             f"{path} has manifest version {raw.get('version')!r}; this "
             f"bunnyforge understands version {MANIFEST_VERSION}. Upgrade "
             "bunnyforge, or restore the manifest from git.")
-    return dict(raw.get("pages", {}))
+    pages = raw.get("pages", {})
+    if not isinstance(pages, dict):
+        # dict() of a non-dict iterable doesn't reliably fail loudly: a list
+        # of two-character strings (e.g. ["ab", "cd"]) silently becomes
+        # {"a": "b", "c": "d"} instead of raising, which would corrupt the
+        # manifest read rather than refuse it. Reject the shape outright.
+        raise DeployError(
+            f"{path} has a non-object 'pages' field "
+            f"({type(pages).__name__}) — it is the deploy baseline. "
+            "Restore it from git rather than deleting it.")
+    return dict(pages)
 
 
 def save_manifest(path: Path, pages: dict[str, str]) -> None:
