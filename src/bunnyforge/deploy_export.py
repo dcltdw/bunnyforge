@@ -27,6 +27,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -319,6 +321,71 @@ def main(argv: list[str] | None = None) -> int:
         for pid in sorted(result.placeholder_ids):
             print(f"  {pid}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Transport half: manifest, classification, plan/apply. The render code above
+# is untouched — a deploy always uploads what it just rendered.
+# ---------------------------------------------------------------------------
+
+MANIFEST_VERSION = 1
+MANIFEST_FILE = ".bunnyforge/wiki-manifest.json"
+DRIFT_DIR = ".bunnyforge/wiki-drift"
+
+
+class DeployError(Exception):
+    """The deploy phase cannot proceed; message is user-facing."""
+
+
+def page_hash(text: str) -> str:
+    """Hash of what the wiki returns from get_page after a save — never of
+    the bytes we sent: DokuWiki normalizes on save, and hashing our own
+    bytes would make every page look self-drifted on the next run."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def classify_page(target_text: str, wiki_text: str | None,
+                  manifest_hash: str | None) -> str:
+    """The spec's eight-row state matrix as a pure function.
+
+    (staged target text, current wiki text or None, manifest hash or None)
+    -> one of: new, deleted-on-wiki, unchanged, update, adopt, drift,
+    drift-manual-era. 'adopt' covers both resume-after-crash and the
+    manual-era exact match; the two drift labels differ only in how the
+    report explains them.
+    """
+    if wiki_text is None:
+        return "new" if manifest_hash is None else "deleted-on-wiki"
+    if manifest_hash is None:
+        return "adopt" if target_text == wiki_text else "drift-manual-era"
+    if page_hash(wiki_text) == manifest_hash:
+        return "unchanged" if target_text == wiki_text else "update"
+    return "adopt" if target_text == wiki_text else "drift"
+
+
+def load_manifest(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise DeployError(
+            f"{path} is not valid JSON: {exc}. It is the deploy baseline — "
+            "restore it from git rather than deleting it.") from exc
+    if not isinstance(raw, dict) or raw.get("version") != MANIFEST_VERSION:
+        raise DeployError(
+            f"{path} has manifest version {raw.get('version')!r}; this "
+            f"bunnyforge understands version {MANIFEST_VERSION}. Upgrade "
+            "bunnyforge, or restore the manifest from git.")
+    return dict(raw.get("pages", {}))
+
+
+def save_manifest(path: Path, pages: dict[str, str]) -> None:
+    """Sorted keys so the committed manifest diffs cleanly in git."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps({"version": MANIFEST_VERSION,
+                       "pages": dict(sorted(pages.items()))}, indent=1)
+    path.write_text(body + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

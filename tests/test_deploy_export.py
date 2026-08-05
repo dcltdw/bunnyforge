@@ -784,5 +784,58 @@ class TestExportDirComposesWithWorkspace(unittest.TestCase):
             self.assertIn("campaign.toml", err)
 
 
+class TestClassifyPage(unittest.TestCase):
+    """The spec's eight-row state matrix, walked as a table."""
+
+    def test_all_eight_rows(self):
+        h = deploy_export.page_hash
+        rows = [
+            # (target, wiki_text, manifest_hash) -> action
+            ("t\n", None, None, "new"),
+            ("t\n", None, h("old\n"), "deleted-on-wiki"),
+            ("t\n", "t\n", h("t\n"), "unchanged"),
+            ("t2\n", "t\n", h("t\n"), "update"),
+            ("t\n", "t\n", h("other\n"), "adopt"),      # resume-after-crash
+            ("t2\n", "t\n", h("other\n"), "drift"),
+            ("t\n", "t\n", None, "adopt"),               # manual-era match
+            ("t2\n", "t\n", None, "drift-manual-era"),
+        ]
+        for target, wiki, mh, expected in rows:
+            with self.subTest(expected=expected):
+                self.assertEqual(
+                    deploy_export.classify_page(target, wiki, mh), expected)
+
+
+class TestManifest(unittest.TestCase):
+    def test_missing_file_is_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(
+                deploy_export.load_manifest(Path(d) / "none.json"), {})
+
+    def test_round_trip_sorted(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".bunnyforge" / "wiki-manifest.json"
+            deploy_export.save_manifest(path, {"b:x": "2", "a:x": "1"})
+            raw = path.read_text(encoding="utf-8")
+            self.assertLess(raw.index('"a:x"'), raw.index('"b:x"'))
+            self.assertEqual(deploy_export.load_manifest(path),
+                             {"a:x": "1", "b:x": "2"})
+
+    def test_unknown_version_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "m.json"
+            path.write_text('{"version": 99, "pages": {}}', encoding="utf-8")
+            with self.assertRaises(deploy_export.DeployError):
+                deploy_export.load_manifest(path)
+
+    def test_bad_json_refused_instructionally(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "m.json"
+            path.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(deploy_export.DeployError) as ctx:
+                deploy_export.load_manifest(path)
+            self.assertIn(str(path), str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
