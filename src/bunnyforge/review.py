@@ -351,6 +351,40 @@ def check_wiki_plugins(files: list[FileRec], wiki_root: Path) -> list[Finding]:
     return []
 
 
+# remoteuser's stock value is a placeholder DokuWiki treats as
+# not-configured; the check must treat it as unset, not as a scoping.
+_REMOTEUSER_UNSET = "!!not set!!"
+
+
+def check_wiki_remote(files: list[FileRec], wiki_root: Path) -> list[Finding]:
+    """The deploy transport's preconditions, stated as universal rules.
+
+    A disabled API is a legitimate secure state and yields no finding — the
+    deploy's own -32605 translation owns that path. Built on read_conf: no
+    network, so the suite stays runnable against a filesystem copy and CI
+    never needs a live wiki.
+    """
+    conf = dwi.read_conf(wiki_root)
+    remote = conf.get("remote")
+    if remote is None or not remote.value:
+        return []
+    out: list[Finding] = []
+    if remote.source not in _UPGRADE_SAFE_CONF:
+        out.append(Finding(
+            "error", "wiki-remote", f"conf/{remote.source}",
+            f"remote is enabled but set in {remote.source}, which DokuWiki "
+            f"upgrades overwrite — move it to conf/local.php"))
+    ru = conf.get("remoteuser")
+    value = str(ru.value).strip() if ru and ru.value is not None else ""
+    if not value or value == _REMOTEUSER_UNSET:
+        out.append(Finding(
+            "error", "wiki-remote", "conf/",
+            "remote is enabled but remoteuser is unset or empty — every "
+            "wiki account can call the API; scope it to the deploy user in "
+            "conf/local.php"))
+    return out
+
+
 CHECKS = {
     "visibility-audit": check_visibility_audit,
     "front-matter": check_front_matter,
@@ -360,6 +394,7 @@ CHECKS = {
     "wiki-conf": check_wiki_conf,
     "wiki-acl": check_wiki_acl,
     "wiki-plugins": check_wiki_plugins,
+    "wiki-remote": check_wiki_remote,
 }
 
 SUITES = {
@@ -368,7 +403,7 @@ SUITES = {
     # Deliberately not part of checkup: it needs a live install, which CI does
     # not have. Keeping it a separate suite is the whole skippability
     # mechanism — checkup never reaches off the local machine.
-    "wiki": ["wiki-conf", "wiki-acl", "wiki-plugins"],
+    "wiki": ["wiki-conf", "wiki-acl", "wiki-plugins", "wiki-remote"],
 }
 
 # Checks that need the full Workspace (its config), rather than just the
@@ -377,7 +412,7 @@ SUITES = {
 _NEEDS_WORKSPACE = frozenset({"wikilinks", "compendium"})
 # Checks taking a DokuWiki install root instead of anything from the
 # workspace — a third argument shape, alongside Workspace and workspace root.
-_NEEDS_WIKI = frozenset({"wiki-conf", "wiki-acl", "wiki-plugins"})
+_NEEDS_WIKI = frozenset({"wiki-conf", "wiki-acl", "wiki-plugins", "wiki-remote"})
 
 
 def run_suite(suite: str, ws: Workspace,
