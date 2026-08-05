@@ -327,6 +327,17 @@ class TestWhatInitWrites(unittest.TestCase):
                 self.assertTrue(line.lstrip().startswith("#"),
                                 f"line {n} is live code: {line!r}")
 
+    def test_gitignore_covers_wiki_token_and_drift(self):
+        # The wiki credential and the tool-owned drift copies must never be
+        # committed. The ignores must be two specific entries, never a
+        # whole-directory ignore that would silently swallow the deploy
+        # manifest too.
+        target = _scaffold(self)
+        text = (target / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".bunnyforge/wiki-token", text)
+        self.assertIn(".bunnyforge/wiki-drift/", text)
+        self.assertNotIn(".bunnyforge/\n", text)
+
     def test_a_scaffolded_workspace_reports_no_tests_rather_than_crashing(self):
         # The whole feature, end to end: init a workspace, then run the very
         # command a new user runs first. Before the scaffold this printed an

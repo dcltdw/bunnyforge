@@ -64,6 +64,32 @@ Facts this design builds on, verified on a real `2026-07-14a "Mort"` install
   right shape for a deploy tool: scopable, revocable without a password
   change, never the owner's login.
 
+**Verified against a live deploy attempt (2026-08-05), JSON-RPC API version
+14** — the first real run surfaced three assumptions above that did not
+survive contact:
+
+- **`core.getAPIVersion()` returns 14** on the target install.
+- **A missing page returns `""` with a *success* error object** —
+  `{"code": 0, "message": "success"}` — never error 121. 121 does not occur on
+  this build at all. `get_page` now treats an empty result the same as 121
+  (see the client section below); the "First-live-deploy checklist" item this
+  answered is recorded there.
+- **`Authorization: Bearer <token>` alone is unusable on hosts where PHP runs
+  as CGI/FastCGI** — Apache strips the header before PHP sees it. On the
+  target host, DokuWiki's `getallheaders()` returned every other header but
+  no `Authorization`, so its `$_SERVER` fallback (which only runs when
+  `getallheaders()` itself is empty) never triggered either — no `.htaccess`
+  or `preload.php` normalisation fixes this from this side.
+  **`X-DokuWiki-Token: <token>` is not special-cased by Apache and arrives
+  intact**, and DokuWiki's `auth_tokenlogin()` prefers it over `Authorization`
+  when both are present. The client now sends both headers.
+- **The two authentication failure modes are distinguishable and both
+  reachable over JSON-RPC**: no credential at all is HTTP 401 / RPC code
+  `-32603` (`AccessDeniedException` with no `REMOTE_USER`); a credential that
+  is valid but lacks permission for the method is HTTP 403 / RPC code
+  `-32604` (`REMOTE_USER` present). The error table now gives both their own
+  entry instead of leaving `-32603` to the "unrecognised code" fallback.
+
 ## Scope
 
 **In:** transport in `deploy_export.py`; a new `_dokuwiki_rpc.py` client; a
@@ -106,7 +132,11 @@ Missing both → instructional error naming both sources and where a token
 comes from (the wiki user's profile → API token). A rejected credential is a
 server-side answer and is translated per the error table (`-32604`).
 
-Sent as `Authorization: Bearer <token>`. HTTP Basic is deliberately not
+Sent as both `Authorization: Bearer <token>` and `X-DokuWiki-Token: <token>`
+(verified live, 2026-08-05 — see above: some hosts strip `Authorization`
+before PHP ever sees it, and `X-DokuWiki-Token` is what survives there).
+Sending both is strictly more compatible than either alone and costs nothing
+on a host where `Authorization` already works. HTTP Basic is deliberately not
 supported: one auth path is one to test, and a token is strictly better for
 this job. Plain `http://` URLs are refused — the token would cross the wire
 in clear — except for localhost, which keeps a local test install usable.
@@ -164,12 +194,17 @@ install over the wire. Stdlib only; imports nothing from `_config` — it takes
   bookkeeping.
 - **Success test:** `error` absent, `null`, or `code == 0` — never
   key-presence.
-- Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`,
-  `User-Agent: bunnyforge/<version>`. One timeout (default 30s). Standard TLS
-  verification, no knob to disable it.
+- Headers: `Authorization: Bearer <token>` **and** `X-DokuWiki-Token: <token>`
+  (both, verified live — some hosts strip `Authorization` before PHP ever
+  sees it; `X-DokuWiki-Token` is what survives there), `Content-Type:
+  application/json`, `User-Agent: bunnyforge/<version>`. One timeout (default
+  30s). Standard TLS verification, no knob to disable it.
 - Surface: `call(method, params)` plus three typed wrappers:
-  - `get_page(id) -> str | None` — `None` for "does not exist" (error 121
-    translated internally; it is a state, not a failure);
+  - `get_page(id) -> str | None` — `None` for "does not exist": an empty
+    result (verified live — the missing-page response on API 14) or error
+    121 (older builds; kept, costs nothing). Safe rather than a heuristic:
+    `core.savePage` refuses to create an empty page (error 132), so a page
+    cannot simultaneously be empty and exist;
   - `save_page(id, text, summary)` — every save carries the change summary
     `bunnyforge deploy-export`, so wiki history shows provenance.
 
@@ -285,17 +320,21 @@ design; `-32605` and `-32606` verified live.
 | DNS failure / connection refused / timeout (`URLError`) | the URL from `[wiki]`, and that it is a connectivity or config problem, not a wiki fault |
 | HTTP 404 at the endpoint | no JSON-RPC endpoint — DokuWiki too old (the minimum release, pinned during implementation) or wrong base URL |
 | `-32605` | "your wiki's remote API is disabled; set `$conf['remote'] = 1` in `conf/local.php`, not `conf/dokuwiki.php`" — on the critical path: `remote` defaults to 0, so every new user hits this on their first deploy |
-| `-32604` | not authorized: check the token (`BUNNYFORGE_WIKI_TOKEN` / `.bunnyforge/wiki-token`) and that the API user is within `$conf['remoteuser']` |
+| `-32603` | not authenticated — the wiki received no usable credential (HTTP 401, `AccessDeniedException` with no `REMOTE_USER`); names the common non-obvious cause — some hosts strip `Authorization` when PHP runs as CGI/FastCGI, and bunnyforge also sends `X-DokuWiki-Token` for exactly that reason — and points at the token (`BUNNYFORGE_WIKI_TOKEN` / `.bunnyforge/wiki-token`) and `$conf['remoteuser']` |
+| `-32604` | authenticated but forbidden — the credential was accepted but this user may not call the method (HTTP 403, `AccessDeniedException` with `REMOTE_USER` set); points at `$conf['remoteuser']` and the wiki's ACL |
 | `111` | the wiki's ACL denies this user on `<page-id>` — grant the deploy user edit on the campaign namespace |
 | `133` | page locked by an editing session — retry after the lock expires (default 15 minutes) |
 | `134` | content blocked by the wiki's wordblock blacklist, naming the page |
 | `-32606`, `-32700`, `-32602`, `131`, `132` | "bug in bunnyforge, please report" — client-side defects a user should never see |
 | anything else | method, code, raw message, "unrecognised code — please report" |
 
-`121` never reaches the user — it is the internal "does not exist" signal.
-`-32603`'s meaning differs between DokuWiki's layers (method-not-found at the
-API layer, internal error in the standard), which is exactly why unknown
-codes print raw rather than guessing.
+`121` never reaches the user — it is the internal "does not exist" signal,
+alongside an empty `core.getPage` result (verified live, see above). The
+spec had deferred `-32603` as ambiguous between DokuWiki's layers; the
+JSON-RPC server's own source (`inc/Remote/JsonRpcServer.php`) resolves that
+ambiguity at this layer — `-32603` is unauthenticated, `-32604` is
+authenticated-but-forbidden — so both now get a named entry instead of
+falling through to "unrecognised code, please report it."
 
 ## `review wiki` gains `wiki-remote`
 
@@ -307,6 +346,7 @@ copy and CI never needs a live wiki. Universal rules, naming no campaign:
 |---|---|
 | `remote` enabled but `remoteuser` unset or empty — every wiki account can call the API | error |
 | `remote` enabled from `conf/dokuwiki.php` — one upgrade from silently reverting | error (mirrors the `useacl` provenance rule) |
+| `remoteuser` set to a real value but from `conf/dokuwiki.php` — one upgrade from reverting to the stock placeholder, handing every account the API back | error (the same provenance rule, applied to the setting that actually holds the security boundary; the placeholder case above wins when `!!not set!!` itself lives in `dokuwiki.php`) |
 | `remote` disabled | no finding — a disabled API is a legitimate secure state; the deploy's `-32605` translation owns that path |
 
 `remoteuser`'s stock value is the placeholder `!!not set!!`, which DokuWiki
@@ -320,8 +360,10 @@ from prose — green on 3.11, 3.12, and 3.13.
 
 - **Client** — injected transport; all three success shapes (`error` absent /
   `null` / `code 0` — the key-presence trap pinned by a test), each
-  translated error code, Bearer and Content-Type headers on the request,
-  `121 → None` in `get_page`, timeout and `URLError` translation,
+  translated error code (including `-32603` vs `-32604`, distinguished per
+  the live source), Bearer, `X-DokuWiki-Token`, and Content-Type headers on
+  the request (both credential headers unredirected), `121 → None` and
+  `"" → None` in `get_page`, timeout and `URLError` translation,
   non-localhost `http://` refusal.
 - **Planner** — the classification is a pure function
   `(target_bytes, wiki_text, manifest_hash) → action`; one table-driven test
@@ -364,7 +406,11 @@ mismatch), expecting PyPI index lag before the campaign repo can re-pin.
 ## First-live-deploy checklist
 
 Named here because no test can cover them; each is checked on the first real
-deploy before being trusted:
+deploy before being trusted. One item originally on this list — whether
+`core.getPage` on a missing page returns error 121 or `""` — is answered and
+removed from the open list below; the finding is recorded under "Verified
+against a live deploy attempt (2026-08-05)" above, and `get_page` and its
+tests were updated accordingly. Renumbered:
 
 1. `~~NOTOC~~` placeholder pages render blank and count as existing.
 2. The exact named-parameter spelling `core.savePage` expects in the

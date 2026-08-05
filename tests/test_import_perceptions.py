@@ -331,7 +331,7 @@ class TestMain(unittest.TestCase):
             data, perceptions = d / "data", d / "Perceptions"
             _write_page(data / "pages", "party:mira", "====== Mira ======\n\nbody\n")
 
-            rc = self._run_main(d, "--wiki-data", str(data))
+            rc = self._run_main(d, "--wiki-data", str(data), "--go")
 
             self.assertEqual(rc, 0)
             out_file = perceptions / "party-mira.md"
@@ -349,7 +349,7 @@ class TestMain(unittest.TestCase):
             data = d / "data"
             _write_page(data / "pages", "party:mira", "====== Mira ======\n\nbody\n")
 
-            rc = self._run_main(d, "--wiki-data", str(data))
+            rc = self._run_main(d, "--wiki-data", str(data), "--go")
 
             self.assertEqual(rc, 0)
             self.assertTrue((d / "PlayerBeliefs" / "party-mira.md").exists())
@@ -371,7 +371,7 @@ class TestMain(unittest.TestCase):
             _write_attic(data / "attic", "party:mira", 100,
                          "====== Mira ======\n\narchived body\n")
 
-            rc = self._run_main(d, "--wiki-data", str(data), "--as-of", "2020-01-01")
+            rc = self._run_main(d, "--wiki-data", str(data), "--as-of", "2020-01-01", "--go")
 
             self.assertEqual(rc, 0)
             out_file = perceptions / "party-mira--2020-01-01.md"
@@ -391,11 +391,15 @@ class TestMain(unittest.TestCase):
             dest.write_text("SENTINEL - pre-existing", encoding="utf-8")
             _write_page(data / "pages", "party:mira", "====== Mira ======\n\nnew body\n")
 
+            # No --go here: the file already exists and --overwrite is not
+            # given, so this hits the "skip (exists)" path before the
+            # dry-run/--go branch is ever consulted — a dry run proves the
+            # same thing a --go run would.
             rc = self._run_main(d, "--wiki-data", str(data))
             self.assertEqual(rc, 0)
             self.assertEqual(dest.read_text(encoding="utf-8"), "SENTINEL - pre-existing")
 
-            rc = self._run_main(d, "--wiki-data", str(data), "--overwrite")
+            rc = self._run_main(d, "--wiki-data", str(data), "--overwrite", "--go")
             self.assertEqual(rc, 0)
             content = dest.read_text(encoding="utf-8")
             self.assertIn("new body", content)
@@ -408,12 +412,40 @@ class TestMain(unittest.TestCase):
             data, perceptions = d / "data", d / "Perceptions"
             _write_page(data / "pages", "party:mira", "====== Mira ======\n\nbody\n")
 
-            rc = self._run_main(d, "--wiki-data", str(data), "--dry-run")
+            # No --go: the bare run IS the dry run now (package-wide
+            # convention), so this is the default invocation, not a flag.
+            rc = self._run_main(d, "--wiki-data", str(data))
 
             self.assertEqual(rc, 0)
-            # --dry-run must never create the destination directory, let
+            # A dry run must never create the destination directory, let
             # alone write into it.
             self.assertFalse(perceptions.exists())
+
+    def test_go_writes(self):
+        # Mirror of test_dry_run_writes_nothing with --go: the file actually
+        # appears, with the expected front matter.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            _write_campaign_toml(d)
+            data, perceptions = d / "data", d / "Perceptions"
+            _write_page(data / "pages", "party:mira", "====== Mira ======\n\nbody\n")
+
+            rc = self._run_main(d, "--wiki-data", str(data), "--go")
+
+            self.assertEqual(rc, 0)
+            out_file = perceptions / "party-mira.md"
+            self.assertTrue(out_file.exists())
+            self.assertIn("canon: perception", out_file.read_text(encoding="utf-8"))
+
+    def test_dry_run_flag_removed(self):
+        # --dry-run is gone, not deprecated: argparse rejects it loudly
+        # (exit code 2) rather than silently accepting a stale script's flag
+        # with a now-different meaning.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as ctx:
+                ip.main(["--wiki-data", "/nonexistent", "--dry-run"])
+        self.assertEqual(ctx.exception.code, 2)
 
     def test_malformed_as_of_returns_nonzero(self):
         with tempfile.TemporaryDirectory() as d:

@@ -180,10 +180,17 @@ Exports player-authored wiki pages into `Perceptions/`, marked
 Reads DokuWiki's flat files rather than its API, because `data/attic/` keeps
 every historical revision — which makes exact session-boundary snapshots free.
 
+Follows the package-wide dry-run convention: the default run only reports what
+it would write; pass `--go` to actually write. **Breaking, pre-1.0:** earlier
+versions took a `--dry-run` flag with the opposite default (writing unless
+`--dry-run` was passed). `--dry-run` no longer exists — a bare invocation is
+now the rehearsal, and `--go` is what writes.
+
 ```sh
-python3 -m bunnyforge.import_perceptions --wiki-data /path/to/dokuwiki/data
-python3 -m bunnyforge.import_perceptions --wiki-data ... --namespace party
-python3 -m bunnyforge.import_perceptions --wiki-data ... --as-of 2026-03-14
+python3 -m bunnyforge.import_perceptions --wiki-data /path/to/dokuwiki/data          # dry run
+python3 -m bunnyforge.import_perceptions --wiki-data ... --go
+python3 -m bunnyforge.import_perceptions --wiki-data ... --namespace party --go
+python3 -m bunnyforge.import_perceptions --wiki-data ... --as-of 2026-03-14 --go
 ```
 
 `--as-of YYYY-MM-DD` captures each page as it stood on that date, suffixing the
@@ -219,10 +226,32 @@ wikilink policy. There is no separate handout publisher.
 ## deploy_export.py
 
 Renders `Export/` into a DokuWiki page tree — content pages in DokuWiki markup
-plus include-wrappers — ready to be copied onto the wiki.
+plus include-wrappers — and deploys it to the wiki over DokuWiki's JSON-RPC
+API. Three invocations:
+
+| invocation | what it does |
+|---|---|
+| `deploy_export.py` | **Dry run (the default).** Render, fetch the wiki's current state, print the full deploy plan — including pages held back for drift. Writes nothing to the wiki, makes no manifest change. |
+| `deploy_export.py --go` | Same plan, then perform the writes it calls for and update the manifest. |
+| `deploy_export.py --render-only --staging PATH` | Render only, offline. No `[wiki]` config and no token needed; unchanged from before this pipeline could deploy at all. |
 
     python3 -m bunnyforge.export_player
+    python3 -m bunnyforge.deploy_export                          # dry run
+    python3 -m bunnyforge.deploy_export --go                     # deploy
     python3 -m bunnyforge.deploy_export --render-only --staging /tmp/stage
+    python3 -m bunnyforge.deploy_export --go --overwrite <ns>:npcs:<stem>
+
+`--staging` is optional in the default and `--go` modes — a temporary
+directory is used and removed at exit, so a stale tree can never be pushed —
+and required with `--render-only`, where the staged tree is the deliverable.
+Whenever `--staging` is given, it must be a fresh or empty directory: a
+pre-existing, non-empty staging tree is refused rather than rendered into,
+since a page dropped from this run (e.g. flipped to `gm-only` since the last
+run) would otherwise survive untouched from the previous run while this run
+still reports success.
+
+`--overwrite <page-id>` (repeatable) writes a held-back page anyway and
+re-baselines it; see "Drift" below. It only takes effect with `--go`.
 
 Each exported file becomes two pages: `<ns>:export:<dir>:<stem>` holding the
 converted content, and `<ns>:<dir>:<stem>` holding two Include directives —
@@ -231,13 +260,116 @@ and this pipeline never writes. `<ns>:main` is hand-written on the wiki and
 is never wrapped or overwritten. `<ns>` is `campaign.namespace` from
 `campaign.toml`.
 
-Transport to the server is not implemented yet; `--render-only` is currently
-required.
+### Connecting to the wiki
 
-`--staging` must be a fresh or empty directory. A pre-existing, non-empty
-staging tree is refused rather than rendered into, since a page dropped from
-this run (e.g. flipped to `gm-only` since the last run) would otherwise
-survive untouched from the previous run while this run still reports success.
+Any mode but `--render-only` needs a `[wiki]` table in `campaign.toml` naming
+the wiki's **base URL** — the client appends `lib/exe/jsonrpc.php` itself, so
+do not include it:
+
+```toml
+[wiki]
+url = "https://<wiki>"
+```
+
+`https://` is required. A plain `http://` URL is refused — the token would
+cross the wire in clear — except for `localhost`, `127.0.0.1`, or `::1`,
+where a local test install has nothing to leak.
+
+That check can only vet the URL you configured, so **redirects are refused
+too**, rather than followed. A wiki whose canonical URL redirects (apex to
+`www`, or an `https` vhost that `301`s to `http`) would otherwise carry the
+`Authorization` header onto the redirect target: `urllib` forwards it even
+across a host change. Point `[wiki] url` at the wiki's canonical base URL —
+the JSON-RPC endpoint has no legitimate reason to redirect.
+
+Both credential headers are sent on every call: `Authorization: Bearer
+<token>` and `X-DokuWiki-Token: <token>`. Some hosts run PHP as CGI/FastCGI,
+which makes Apache strip `Authorization` before PHP ever sees it;
+`X-DokuWiki-Token` is not special-cased that way and is what actually works
+on such hosts, while keeping `Authorization` preserves compatibility with any
+build that only honours that one. See the troubleshooting note below if
+every call fails with `-32603`.
+
+It also needs a DokuWiki API token, resolved in order:
+
+1. the `BUNNYFORGE_WIKI_TOKEN` environment variable, or
+2. a single line in `<workspace>/.bunnyforge/wiki-token`.
+
+The token file is refused, with a `chmod 600 <path>` instruction, if it is
+readable by group or world — a wiki credential must be private. Its
+directory is checked too: a `.bunnyforge/` writable by group or world is
+refused with `chmod 700 <path>`, because anyone who can write the directory
+can replace the credential inside it. Create the token on the wiki itself:
+log in as the deploy user, open its profile, and generate an API token there.
+
+**Troubleshooting: every call fails with `-32603`.** The wiki received no
+usable credential at all. The likely cause is the host running PHP as
+CGI/FastCGI, which makes Apache strip the `Authorization` header before PHP
+ever sees it — a hosting-config problem, not a bunnyforge bug. bunnyforge
+already sends `X-DokuWiki-Token` alongside `Authorization`, which usually
+survives on such hosts; if `-32603` persists, check the token itself and that
+the API user is within `$conf['remoteuser']`.
+
+### The manifest
+
+`<workspace>/.bunnyforge/wiki-manifest.json` records the hash of what this
+tool last wrote for every page it deployed. It is **committed** to the
+campaign repo, not gitignored: deploying from a second machine then sees the
+true baseline, and the post-deploy diff is reviewable in the repo's own git
+history like any other change.
+
+### Drift
+
+A staged page is **held back**, never silently overwritten, for any of three
+reasons:
+
+- **drift** — the page changed on the wiki since the last deploy: the wiki's
+  current text no longer matches the hash this tool recorded, and it also
+  differs from what would now be deployed.
+- **drift-manual-era** — this page has no baseline in the manifest at all,
+  yet the wiki's current text differs from what would be deployed. This is
+  what fires on the **first** deploy against a wiki that already has content
+  from the old manual-copy workflow, or against any page edited by hand
+  outside this tool: with no recorded baseline the tool cannot tell what
+  changed, so it refuses to guess and holds the page back rather than
+  overwriting a page it never wrote itself.
+- **deleted-on-wiki** — the page is still staged (its source file is still
+  exported), but a human deleted the wiki page since the last deploy.
+  Recreating it would clobber that deletion decision, so it is held back
+  instead. This is distinct from an **orphan** (below): an orphan is a
+  manifest entry that has dropped *out of* the staged set — the source file
+  was removed, or its visibility changed — whereas `deleted-on-wiki` is a
+  page still being staged whose *wiki* copy is the one that's gone.
+
+For `drift` and `drift-manual-era` the plan reports a unified diff against
+the staged target, and the wiki's current text is written to
+`<workspace>/.bunnyforge/wiki-drift/` for manual merge (recreated from empty
+on every planning run, so a page that stops drifting leaves no stale copy
+behind); `deleted-on-wiki` has no wiki text to diff or copy. The resolution
+is the same for all three: either pull the wiki edit into the workspace
+source — the next render then matches and the drift disappears — or re-run
+with `--overwrite <page-id> --go` to clobber it and re-baseline.
+
+The same guarantee holds **within** a single `--go` run. The plan fetches
+every page up front, so on a large campaign tens of seconds pass between a
+page being read and being written. Each page is therefore re-read immediately
+before its save, and a page whose wiki text changed in that window is
+reported `SKIPPED` and left alone — the run exits non-zero and the next plan
+reports it as ordinary drift, with a diff. This applies to `--overwrite`
+pages too: `--overwrite` consents to clobbering the diff the plan printed,
+and an edit that landed after that diff was never reviewed.
+
+### Orphans
+
+A manifest entry no longer staged (the source file was deleted, or flipped
+to `gm-only`) is **reported as an orphan, never deleted** — removing the wiki
+page is a manual act this tool does not automate. If the page was already
+deleted on the wiki by hand, it is reported as resolved instead and drops
+from the manifest on `--go`.
+
+The exit code is non-zero if anything was held back or any orphan was
+reported, in both dry-run and `--go` modes — a clean plan is the only way to
+see exit 0.
 
 **Known limitations.** `to_dokuwiki`'s emphasis handling (`*text*`, `**text**`)
 is line-scoped: an emphasis span crossing a line break is left as literal
@@ -304,6 +436,73 @@ any form, not even their filename appears". The run summary therefore lists
 every placeholder page ID it wrote; read that list before copying the staging
 tree onto the wiki.
 
+### Live wiki check
+
+`tests/live_wiki_check.py` is an opt-in, human-invoked script that exercises
+this transport against a **real** DokuWiki install — the same kind of
+confidence `tests/check_portability.py` gives a culture author, but for the
+deploy transport. It is not a `unittest` test: `unittest discover`'s default
+pattern is `test*.py`, so this file is never collected, and it **never runs
+in CI or the normal test suite** — every other test in this suite is
+offline by design, and that posture never changes.
+
+```sh
+PYTHONPATH=src python3 tests/live_wiki_check.py --workspace PATH            # read-only checks
+PYTHONPATH=src python3 tests/live_wiki_check.py --workspace PATH --go       # full battery, writes to the wiki
+```
+
+Without `--go` it runs three read-only checks (the auth handshake, the
+missing-page contract, and the protected-page guard) and writes nothing.
+With `--go` it also deploys, edits, drift-tests, `--overwrite`s, and
+resume-after-crash-tests a small probe page under `<ns>:live-wiki-check:` —
+using its own temporary workspace and manifest, never the real
+`<workspace>/.bunnyforge/wiki-manifest.json` — and probes two RPC edge
+cases (`core.savePage` refusing an empty page; the `~~NOTOC~~` placeholder
+body saving as non-empty). Every write check reuses the same handful of
+stable page IDs, so running it repeatedly updates those same pages in place
+rather than piling up new ones. **This tool cannot delete wiki pages**, so
+neither can this script — it prints the page IDs it touched at the end, and
+removing them, if ever wanted, is a manual act on the wiki itself.
+
+`--workspace` is optional: `--wiki-url URL --namespace NS`, given together,
+run the same checks with no campaign workspace and no `campaign.toml` at
+all — this is how CI runs it (see below). The two must be given together;
+either alone is refused with an instructional error. The credential still
+resolves the same way as everywhere else in this package —
+`BUNNYFORGE_WIKI_TOKEN` first, else `<workspace>/.bunnyforge/wiki-token` —
+except that with no `--workspace` there is no token file to fall back to,
+so the environment variable is the only option; if it is unset, the script
+fails naming it.
+
+```sh
+BUNNYFORGE_WIKI_TOKEN=... PYTHONPATH=src python3 tests/live_wiki_check.py \
+    --wiki-url https://<wiki> --namespace <ns>            # read-only checks
+BUNNYFORGE_WIKI_TOKEN=... PYTHONPATH=src python3 tests/live_wiki_check.py \
+    --wiki-url https://<wiki> --namespace <ns> --go       # full battery
+```
+
+#### CI canary
+
+`.github/workflows/live-wiki-canary.yml` runs this script's full battery
+(`--go`) weekly against a real wiki, using three repository secrets:
+`WIKI_URL`, `WIKI_TOKEN` (passed to the script as `BUNNYFORGE_WIKI_TOKEN`),
+and `WIKI_NAMESPACE`. It is triggered by `schedule` and `workflow_dispatch`
+only — never `push` or `pull_request`, since GitHub withholds secrets from
+forked pull requests, which would make a secrets-requiring check
+permanently red on outside contributions. If any of the three secrets is
+unset, the job prints a notice naming them and exits successfully — a red
+check caused by missing configuration would be noise, not signal. The repo
+has no branch protection, so this job is deliberately not a required check
+either way: it is a canary, meant to fail loudly when it fails, not a merge
+gate, and it is not a substitute for the unit suite above, which is.
+
+Security notes for whoever configures the secrets: issue a **separate**
+DokuWiki API token for CI rather than reusing a human's local one, so it
+can be revoked independently without disturbing anyone's own setup, and
+keep the deploy user's ACL as narrow as this job actually needs (write
+access to its own `live-wiki-check` sub-path is enough — it never touches
+anything else).
+
 ## review.py
 
 Runs a named suite of workspace checks on demand.
@@ -347,6 +546,12 @@ unit test could have caught:
   page design is composed of its directives.
 - `useheading` must be set to something truthy, or wrapper pages display raw
   page IDs instead of their included heading.
+- If the remote (JSON-RPC) API is enabled, it must be **scoped**: `remote`
+  itself must be set in `conf/local.php`, not the upgrade-overwritten
+  `conf/dokuwiki.php`, and `remoteuser` must name the deploy user rather than
+  being left unset — an unset `remoteuser` lets every wiki account call the
+  API. A disabled remote API is a legitimate secure state and raises nothing;
+  this only fires once `deploy-export` is meant to be usable.
 
 `checkup` never includes these checks, so CI — which has no wiki — is
 unaffected. Everything is read from the install's files directly; there is no

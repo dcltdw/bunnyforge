@@ -16,6 +16,8 @@ Stdlib only. tomllib requires Python 3.11+.
 
 from __future__ import annotations
 
+import os
+import stat
 import tomllib
 from collections import namedtuple
 from pathlib import Path
@@ -33,11 +35,57 @@ Config = namedtuple(
     "Config",
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
-    "briefs_dir sheets_dir perceptions_dir type_dirs")
+    "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url",
+    defaults=[None])  # wiki_url only — [wiki] is optional and network-only
 
 
 class ConfigError(Exception):
     """campaign.toml is missing, malformed, or incomplete."""
+
+
+TOKEN_ENV = "BUNNYFORGE_WIKI_TOKEN"
+TOKEN_FILE = ".bunnyforge/wiki-token"
+
+
+def resolve_wiki_token(workspace_root: Path) -> str:
+    """The deploy credential, in resolution order: env var, then token file.
+
+    A DokuWiki API token, never a password — scopable, revocable without a
+    password change. A rejected credential is a server-side answer and is
+    translated by the RPC error table, not here.
+    """
+    env = os.environ.get(TOKEN_ENV, "").strip()
+    if env:
+        return env
+    path = workspace_root / TOKEN_FILE
+    if path.is_file():
+        # The directory first: a token file nobody else can read is still not
+        # private if anyone can write the directory holding it — they can
+        # unlink it and leave their own credential in its place, and the next
+        # deploy authenticates with a token it did not choose. Group/world
+        # *readable* is fine and stays fine (mkdir under a normal umask leaves
+        # 0o755); only the write bits are refused.
+        parent_mode = stat.S_IMODE(path.parent.stat().st_mode)
+        if parent_mode & 0o022:
+            raise ConfigError(
+                f"{path.parent} is writable by group or world (mode "
+                f"{parent_mode:03o}) — anyone who can write that directory "
+                f"can replace the wiki credential in it:\n"
+                f"  chmod 700 {path.parent}")
+        mode = stat.S_IMODE(path.stat().st_mode)
+        if mode & 0o077:
+            raise ConfigError(
+                f"{path} is readable by group or world (mode {mode:03o}) — "
+                f"a wiki credential must be private:\n  chmod 600 {path}")
+        token = path.read_text(encoding="utf-8").strip()
+        if token:
+            return token
+    raise ConfigError(
+        "no wiki API token found. Provide one via either:\n"
+        f"  - the {TOKEN_ENV} environment variable, or\n"
+        f"  - a single line in <workspace>/{TOKEN_FILE} (chmod 600)\n"
+        "Create one on the wiki: log in as the deploy user, open its "
+        "profile, and generate an API token.")
 
 
 # The three entity types build_sheets understands, and nothing else — an
@@ -140,6 +188,13 @@ def load(workspace: Path) -> Config:
     if not isinstance(spelling, dict):
         raise ConfigError(f"{path}: [names.spelling] must be a table")
 
+    wiki = raw.get("wiki", {})
+    if not isinstance(wiki, dict):
+        raise ConfigError(f"{path}: [wiki] must be a table")
+    wiki_url = wiki.get("url")
+    if wiki_url is not None and not isinstance(wiki_url, str):
+        raise ConfigError(f"{path}: wiki.url must be a string")
+
     entity_dirs = _str_tuple(ws, "entity_dirs")
     inherit_dirs = _str_tuple(ws, "inherit_dirs")
     # iter_content_files walks entity_dirs and then inherit_dirs, so a
@@ -170,6 +225,7 @@ def load(workspace: Path) -> Config:
         sheets_dir=_str(ws, "sheets_dir"),
         perceptions_dir=_str(ws, "perceptions_dir"),
         type_dirs=_type_dirs(ws),
+        wiki_url=wiki_url,
     )
 
 

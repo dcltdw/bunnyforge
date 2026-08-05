@@ -8,8 +8,9 @@ Your campaign is a directory of Markdown files with front matter: NPCs,
 factions, places, sessions, mechanics. bunnyforge gives that directory a
 skeleton, reviews its integrity, generates names from culture inventories
 you define, and exports the player-visible slice to DokuWiki. Everything
-is a text file; everything works offline; the only state is your git
-history.
+is a text file; the only state is your git history. Every command works
+offline except the wiki deploy itself — and even that keeps a fully
+offline path via `deploy-export --render-only`.
 
 - **Python ≥ 3.11, zero runtime dependencies.**
 - **Agent-first doctrine.** `init` writes an `AGENTS.md` contract that
@@ -41,7 +42,7 @@ entity files from the templates in `_Templates/`.
 | `init` | scaffold a new campaign workspace |
 | `review` | run a named workspace review suite (`checkup`, `wiki`) |
 | `export-player` | write player-safe copies of content files to `Export/` |
-| `deploy-export` | render `Export/` into a DokuWiki staging tree |
+| `deploy-export` | render `Export/` and deploy it to the wiki (dry run by default) |
 | `import-perceptions` | import player-authored wiki pages into `Perceptions/` |
 | `build-sheets` | build one-page HTML reference sheets for a session |
 | `names` | generate culture-appropriate names |
@@ -80,11 +81,22 @@ registers and spelling variants.
 
 ## DokuWiki export
 
-`export-player` renders the player-visible slice; `deploy-export` pushes
-it into a DokuWiki staging tree. Sync is strictly one-way: the wiki is a
-published artifact, never a source of truth. `import-perceptions` brings
-player-authored pages back as *perceptions* — recorded belief, explicitly
-not canon.
+`export-player` renders the player-visible slice; `deploy-export` renders it
+into DokuWiki markup and deploys it to the wiki over its JSON-RPC API. Sync
+is strictly one-way: the wiki is a published artifact, never a source of
+truth. `import-perceptions` brings player-authored pages back as
+*perceptions* — recorded belief, explicitly not canon.
+
+## Dry runs and --go
+
+Every mutating command follows one convention: **the default run is a dry
+run; `--go` performs the writes.** A bare `bunnyforge deploy-export` fetches
+and prints the full deploy plan without writing anything; a bare
+`bunnyforge import-perceptions` reports what it would import. Re-run with
+`--go` to act. (`deploy-export --render-only` is not a rehearsal — it is a
+different, offline deliverable, and needs no wiki config at all.)
+
+Future mutating commands inherit this convention.
 
 ## Development
 

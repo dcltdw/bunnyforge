@@ -694,6 +694,109 @@ class TestWikiPluginsCheck(unittest.TestCase):
             self.assertEqual(review.check_wiki_plugins([], root), [])
 
 
+class TestWikiRemote(unittest.TestCase):
+    def _wiki(self, d: Path, local_php="", dokuwiki_php=""):
+        (d / "conf").mkdir(parents=True, exist_ok=True)
+        (d / "lib" / "plugins").mkdir(parents=True, exist_ok=True)
+        (d / "conf" / "dokuwiki.php").write_text(
+            "<?php\n" + dokuwiki_php, encoding="utf-8")
+        if local_php:
+            (d / "conf" / "local.php").write_text(
+                "<?php\n" + local_php, encoding="utf-8")
+        return d
+
+    def _findings(self, d):
+        return review.check_wiki_remote([], d)
+
+    def test_disabled_is_no_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), dokuwiki_php="$conf['remote'] = 0;\n")
+            self.assertEqual(self._findings(wiki), [])
+
+    def test_enabled_without_remoteuser_is_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), local_php="$conf['remote'] = 1;\n")
+            findings = self._findings(wiki)
+            self.assertTrue(any(f.severity == "error" and
+                                "remoteuser" in f.message for f in findings))
+
+    def test_stock_not_set_placeholder_counts_as_unset(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), local_php=(
+                "$conf['remote'] = 1;\n"
+                "$conf['remoteuser'] = '!!not set!!';\n"))
+            findings = self._findings(wiki)
+            self.assertTrue(any("remoteuser" in f.message for f in findings))
+
+    def test_scoped_remoteuser_is_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), local_php=(
+                "$conf['remote'] = 1;\n"
+                "$conf['remoteuser'] = 'deploybot';\n"))
+            self.assertEqual(self._findings(wiki), [])
+
+    def test_enabled_from_dokuwiki_php_is_provenance_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), dokuwiki_php=(
+                "$conf['remote'] = 1;\n"
+                "$conf['remoteuser'] = 'deploybot';\n"))
+            findings = self._findings(wiki)
+            self.assertTrue(any(f.severity == "error" and
+                                "dokuwiki.php" in f.message for f in findings))
+
+    def test_remoteuser_scoped_but_from_dokuwiki_php_is_provenance_error(self):
+        # remote itself is correctly scoped to local.php; remoteuser is the
+        # one that reverts on upgrade. This is the sharper failure the
+        # provenance rule on `remote` alone misses entirely: the check
+        # passes clean today and hands every account the API back the next
+        # time DokuWiki upgrades.
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(
+                Path(d),
+                local_php="$conf['remote'] = 1;\n",
+                dokuwiki_php="$conf['remoteuser'] = 'deploybot';\n")
+            findings = self._findings(wiki)
+            self.assertTrue(
+                any(f.severity == "error" and "remoteuser" in f.message
+                    and "dokuwiki.php" in f.message for f in findings),
+                findings)
+            # And nothing else fires: `remote` itself is clean, so only the
+            # remoteuser-provenance finding should be present.
+            self.assertEqual(len(findings), 1, findings)
+
+    def test_placeholder_remoteuser_from_dokuwiki_php_is_still_unset(self):
+        # The placeholder is DokuWiki's not-configured sentinel regardless
+        # of which file it appears in. It must trip the unset finding, not
+        # the provenance one — there is nothing to move to local.php, the
+        # deploy user was simply never scoped.
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(
+                Path(d),
+                local_php="$conf['remote'] = 1;\n",
+                dokuwiki_php="$conf['remoteuser'] = '!!not set!!';\n")
+            findings = self._findings(wiki)
+            self.assertTrue(
+                any(f.severity == "error" and "unset" in f.message
+                    for f in findings),
+                findings)
+            self.assertFalse(
+                any(f.file and "dokuwiki.php" in f.file for f in findings),
+                findings)
+            self.assertEqual(len(findings), 1, findings)
+
+    def test_both_scoped_to_local_php_is_still_clean(self):
+        # Confirms the new provenance rule does not false-alarm on the
+        # already-correct configuration.
+        with tempfile.TemporaryDirectory() as d:
+            wiki = self._wiki(Path(d), local_php=(
+                "$conf['remote'] = 1;\n"
+                "$conf['remoteuser'] = 'deploybot';\n"))
+            self.assertEqual(self._findings(wiki), [])
+
+    def test_wiki_suite_includes_wiki_remote(self):
+        self.assertIn("wiki-remote", review.SUITES["wiki"])
+
+
 class TestWikiSuiteWiring(unittest.TestCase):
     def test_checkup_does_not_include_any_wiki_check(self):
         # CI has no wiki. The separation is the whole skippability mechanism,

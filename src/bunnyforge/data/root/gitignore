@@ -7,3 +7,9 @@ _Ignore/
 
 # Python
 __pycache__/
+
+# Wiki deploy: the credential and the tool-owned drift copies. The deploy
+# manifest (.bunnyforge/wiki-manifest.json) is deliberately NOT ignored —
+# it is the committed baseline.
+.bunnyforge/wiki-token
+.bunnyforge/wiki-drift/

@@ -57,7 +57,7 @@ _SUMMARIES = {
     "init": "scaffold a new campaign workspace",
     "review": "run a named workspace review suite",
     "export-player": "write player-safe copies of content files to Export/",
-    "deploy-export": "render Export/ into a DokuWiki staging tree",
+    "deploy-export": "render Export/ and deploy it to the wiki (dry run by default)",
     "import-perceptions": "import player-authored wiki pages into Perceptions/",
     "build-sheets": "build one-page HTML reference sheets for a session",
     "names": "generate culture-appropriate names",
