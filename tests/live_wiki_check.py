@@ -74,6 +74,15 @@ Usage:
         --overwrite, adopt, and empty-page/placeholder checks. Writes to
         the live wiki named in PATH/campaign.toml's [wiki] url.
 
+    python3 tests/live_wiki_check.py --wiki-url URL --namespace NS [--go]
+        Same checks, run with no campaign workspace at all -- for CI, or
+        anywhere a campaign.toml is unavailable or beside the point.
+        --wiki-url and --namespace must be given together; each requires
+        the other. With no --workspace, the wiki token can only come from
+        the BUNNYFORGE_WIKI_TOKEN environment variable (there is no
+        workspace root to look for a token file under) -- if it is unset,
+        the script fails with an instructional error naming it.
+
 PYTHONPATH=src is required, exactly as for the rest of the suite — a
 published bunnyforge in site-packages otherwise shadows this working tree.
 """
@@ -574,7 +583,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Campaign workspace root (default: $BUNNYFORGE_WORKSPACE, else "
              "the nearest campaign.toml above the current directory) -- "
              "the REAL workspace, read only for its [wiki] url, namespace, "
-             "and token; never written to")
+             "and token; never written to. Optional if --wiki-url and "
+             "--namespace are both given instead.")
+    parser.add_argument(
+        "--wiki-url", metavar="URL", default=None,
+        help="Wiki base URL, used instead of campaign.toml's [wiki] url. "
+             "Must be paired with --namespace; together they let this "
+             "script run with no --workspace and no campaign.toml at all "
+             "(e.g. in CI). With no --workspace, the wiki token can only "
+             "come from BUNNYFORGE_WIKI_TOKEN.")
+    parser.add_argument(
+        "--namespace", metavar="NS", default=None,
+        help="Wiki namespace, used instead of campaign.toml's "
+             "campaign.namespace. Must be paired with --wiki-url.")
     parser.add_argument(
         "--go", action="store_true",
         help="Also run the write checks (4-11): create/update a probe page "
@@ -583,26 +604,56 @@ def main(argv: list[str] | None = None) -> int:
              "read-only checks (1-3) run and nothing is written.")
     args = parser.parse_args(argv)
 
-    try:
-        real_ws = _config.resolve_workspace(args.workspace)
-    except Exception as exc:  # ConfigError / WorkspaceError, both user-facing
-        print(f"error: {exc}", file=sys.stderr)
+    if bool(args.wiki_url) != bool(args.namespace):
+        print(
+            "error: --wiki-url and --namespace must be given together "
+            "(both, or neither) -- pass both to run with no --workspace, "
+            "or drop both to fall back to --workspace / campaign.toml.",
+            file=sys.stderr)
         return 1
 
-    ns = real_ws.config.namespace
-    wiki_url = real_ws.config.wiki_url
-    if not wiki_url:
-        print("error: campaign.toml has no [wiki] url -- this check needs a "
-              "real wiki to talk to. Add:\n\n"
-              "  [wiki]\n"
-              '  url = "https://<wiki>"\n', file=sys.stderr)
-        return 1
+    # token_root is where a token FILE could live, if one is allowed at all.
+    # It is None exactly when there is no workspace to look under, which is
+    # the only case that collapses token resolution to the environment
+    # variable alone.
+    if args.wiki_url and args.namespace:
+        ns = args.namespace
+        wiki_url = args.wiki_url
+        token_root = Path(args.workspace).resolve() if args.workspace else None
+    else:
+        try:
+            real_ws = _config.resolve_workspace(args.workspace)
+        except Exception as exc:  # ConfigError / WorkspaceError, both user-facing
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
-    try:
-        token = _config.resolve_wiki_token(real_ws.root)
-    except Exception as exc:  # ConfigError
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        ns = real_ws.config.namespace
+        wiki_url = real_ws.config.wiki_url
+        token_root = real_ws.root
+        if not wiki_url:
+            print("error: campaign.toml has no [wiki] url -- this check needs a "
+                  "real wiki to talk to. Add:\n\n"
+                  "  [wiki]\n"
+                  '  url = "https://<wiki>"\n\n'
+                  "or pass --wiki-url URL --namespace NS to run without "
+                  "campaign.toml at all.", file=sys.stderr)
+            return 1
+
+    if token_root is not None:
+        try:
+            token = _config.resolve_wiki_token(token_root)
+        except Exception as exc:  # ConfigError
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    else:
+        token = os.environ.get(_config.TOKEN_ENV, "").strip()
+        if not token:
+            print(
+                "error: no wiki API token found. With no --workspace, the "
+                f"token can only come from the {_config.TOKEN_ENV} "
+                "environment variable, and it is not set. Export it, e.g.:\n"
+                f"  export {_config.TOKEN_ENV}=<token>", file=sys.stderr)
+            return 1
 
     try:
         client = RpcClient(wiki_url, token)

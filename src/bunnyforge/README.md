@@ -464,6 +464,45 @@ rather than piling up new ones. **This tool cannot delete wiki pages**, so
 neither can this script — it prints the page IDs it touched at the end, and
 removing them, if ever wanted, is a manual act on the wiki itself.
 
+`--workspace` is optional: `--wiki-url URL --namespace NS`, given together,
+run the same checks with no campaign workspace and no `campaign.toml` at
+all — this is how CI runs it (see below). The two must be given together;
+either alone is refused with an instructional error. The credential still
+resolves the same way as everywhere else in this package —
+`BUNNYFORGE_WIKI_TOKEN` first, else `<workspace>/.bunnyforge/wiki-token` —
+except that with no `--workspace` there is no token file to fall back to,
+so the environment variable is the only option; if it is unset, the script
+fails naming it.
+
+```sh
+BUNNYFORGE_WIKI_TOKEN=... PYTHONPATH=src python3 tests/live_wiki_check.py \
+    --wiki-url https://<wiki> --namespace <ns>            # read-only checks
+BUNNYFORGE_WIKI_TOKEN=... PYTHONPATH=src python3 tests/live_wiki_check.py \
+    --wiki-url https://<wiki> --namespace <ns> --go       # full battery
+```
+
+#### CI canary
+
+`.github/workflows/live-wiki-canary.yml` runs this script's full battery
+(`--go`) weekly against a real wiki, using three repository secrets:
+`WIKI_URL`, `WIKI_TOKEN` (passed to the script as `BUNNYFORGE_WIKI_TOKEN`),
+and `WIKI_NAMESPACE`. It is triggered by `schedule` and `workflow_dispatch`
+only — never `push` or `pull_request`, since GitHub withholds secrets from
+forked pull requests, which would make a secrets-requiring check
+permanently red on outside contributions. If any of the three secrets is
+unset, the job prints a notice naming them and exits successfully — a red
+check caused by missing configuration would be noise, not signal. The repo
+has no branch protection, so this job is deliberately not a required check
+either way: it is a canary, meant to fail loudly when it fails, not a merge
+gate, and it is not a substitute for the unit suite above, which is.
+
+Security notes for whoever configures the secrets: issue a **separate**
+DokuWiki API token for CI rather than reusing a human's local one, so it
+can be revoked independently without disturbing anyone's own setup, and
+keep the deploy user's ACL as narrow as this job actually needs (write
+access to its own `live-wiki-check` sub-path is enough — it never touches
+anything else).
+
 ## review.py
 
 Runs a named suite of workspace checks on demand.
