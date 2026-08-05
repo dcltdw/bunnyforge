@@ -49,6 +49,7 @@ from bunnyforge._common import (
     target_index,
 )
 from bunnyforge._config import ConfigError, Workspace, resolve_workspace
+from bunnyforge._dokuwiki_rpc import RpcError, translate_error
 from bunnyforge._workspace import WorkspaceError
 
 # Hand-written on the wiki and owned by nobody in this repo. Never wrapped,
@@ -478,6 +479,58 @@ def write_order(page_ids, base: str) -> list[str]:
             order.append(mate)
         order.append(pid)
     return order
+
+
+ApplyResult = namedtuple("ApplyResult", "written adopted failure remaining")
+
+# Held-back actions: written only when named in --overwrite, and always
+# re-baselined when written.
+_HELD = ("drift", "drift-manual-era", "deleted-on-wiki")
+
+
+def apply_deploy(plan: DeployPlan, staged: dict[str, str], client,
+                 manifest: dict[str, str], manifest_path: Path,
+                 overwrite: set[str], base: str, wiki_url: str) -> ApplyResult:
+    """Perform the writes a plan calls for. Mutates `manifest` and writes it
+    through to disk after each successful save, so a run that dies mid-way
+    needs no resume machinery — re-running converges (unchanged / adopt).
+    """
+    held = {pid for pid, p in plan.pages.items() if p.action in _HELD}
+    unknown = sorted(overwrite - held)
+    if unknown:
+        raise DeployError(
+            f"--overwrite names page(s) not held back this run: "
+            f"{', '.join(unknown)} — nothing to clobber.")
+
+    to_write = [pid for pid, p in plan.pages.items()
+                if p.action in ("new", "update") or pid in overwrite]
+    written: list[str] = []
+    adopted: list[str] = []
+
+    for pid, p in plan.pages.items():
+        if p.action == "adopt":
+            manifest[pid] = page_hash(p.wiki_text)
+            adopted.append(pid)
+    for pid in plan.resolved_orphans:
+        manifest.pop(pid, None)
+    if adopted or plan.resolved_orphans:
+        save_manifest(manifest_path, manifest)
+
+    for pid in write_order(to_write, base):
+        try:
+            client.save_page(pid, staged[pid])
+            readback = client.get_page(pid)
+        except RpcError as exc:
+            remaining = [i for i in write_order(to_write, base)
+                         if i not in written]
+            return ApplyResult(
+                written, sorted(adopted),
+                f"{pid}: {translate_error(exc, wiki_url)}", remaining)
+        manifest[pid] = page_hash(readback or "")
+        save_manifest(manifest_path, manifest)
+        written.append(pid)
+
+    return ApplyResult(written, sorted(adopted), None, [])
 
 
 if __name__ == "__main__":

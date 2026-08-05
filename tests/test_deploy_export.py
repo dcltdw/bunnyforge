@@ -7,6 +7,7 @@ from pathlib import Path
 from bunnyforge import _config
 from bunnyforge import deploy_export
 from bunnyforge import export_player
+from bunnyforge._dokuwiki_rpc import RpcError
 
 NS = "testwiki"   # tests own their namespace; never the campaign's
 
@@ -44,6 +45,26 @@ def namespace_of(root: Path) -> str:
     literal, so a main() that stopped consulting config would fail here.
     """
     return _config.open_workspace(root).config.namespace
+
+
+class FakeClient:
+    """In-memory wiki: a dict of pages. Mimics get_page/save_page, applies a
+    save normalization (strips trailing newlines, like DokuWiki) so
+    read-back hashing is exercised for real."""
+
+    def __init__(self, pages=None, fail_on=None):
+        self.pages = dict(pages or {})
+        self.saves = []
+        self.fail_on = fail_on
+
+    def get_page(self, pid):
+        return self.pages.get(pid)
+
+    def save_page(self, pid, text, summary=None):
+        if pid == self.fail_on:
+            raise RpcError(111, "denied", "core.savePage")
+        self.saves.append(pid)
+        self.pages[pid] = text.rstrip("\n") + "\n"
 
 
 class TestRenderTree(unittest.TestCase):
@@ -931,6 +952,96 @@ class TestWriteOrder(unittest.TestCase):
         ids = [f"{NS}:npcs:ana", f"{NS}:npcs:ana", f"{NS}:export:npcs:ana"]
         order = deploy_export.write_order(ids, NS)
         self.assertEqual(order, [f"{NS}:export:npcs:ana", f"{NS}:npcs:ana"])
+
+
+class TestApplyDeploy(unittest.TestCase):
+    def _apply(self, plan, staged, client, manifest, path, overwrite=()):
+        return deploy_export.apply_deploy(
+            plan, staged, client, manifest, path, set(overwrite), "w",
+            "https://<wiki>")
+
+    def test_clean_deploy_writes_and_baselines_readback(self):
+        client = FakeClient()
+        staged = {"w:export:npcs:ana": "body\n\n", "w:npcs:ana": "wrap\n"}
+        manifest = {}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertIsNone(result.failure)
+            # content before wrapper
+            self.assertEqual(client.saves,
+                             ["w:export:npcs:ana", "w:npcs:ana"])
+            # baseline is the hash of the READ-BACK text (normalized by the
+            # fake), not of the bytes sent
+            self.assertEqual(manifest["w:export:npcs:ana"],
+                             deploy_export.page_hash("body\n"))
+            # manifest written through to disk
+            self.assertEqual(deploy_export.load_manifest(mpath), manifest)
+
+    def test_adopt_rebaselines_without_writing(self):
+        client = FakeClient({"w:a": "same\n"})
+        staged = {"w:a": "same\n"}
+        manifest = {"w:a": "stale-hash"}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertEqual(client.saves, [])
+            self.assertEqual(result.adopted, ["w:a"])
+            self.assertEqual(manifest["w:a"], deploy_export.page_hash("same\n"))
+            self.assertEqual(deploy_export.load_manifest(mpath), manifest)
+
+    def test_drift_held_unless_overwritten(self):
+        client = FakeClient({"w:a": "wiki edit\n"})
+        staged = {"w:a": "ours\n"}
+        manifest = {"w:a": deploy_export.page_hash("older\n")}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertEqual(client.saves, [])
+            result = self._apply(plan, staged, client, manifest, mpath,
+                                 overwrite=["w:a"])
+            self.assertEqual(client.saves, ["w:a"])
+            self.assertEqual(manifest["w:a"], deploy_export.page_hash("ours\n"))
+
+    def test_overwrite_of_unheld_page_refused(self):
+        client = FakeClient()
+        staged = {"w:a": "x\n"}
+        with tempfile.TemporaryDirectory() as d:
+            plan = deploy_export.plan_deploy(staged, {}, client.get_page, "w")
+            with self.assertRaises(deploy_export.DeployError) as ctx:
+                self._apply(plan, staged, client, {}, Path(d) / "m.json",
+                            overwrite=["w:nope"])
+            self.assertIn("w:nope", str(ctx.exception))
+
+    def test_failed_save_aborts_reports_written_and_remaining(self):
+        client = FakeClient(fail_on="w:b")
+        staged = {"w:a": "1\n", "w:b": "2\n", "w:c": "3\n"}
+        manifest = {}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertIsNotNone(result.failure)
+            self.assertIn("ACL", result.failure)  # translated, not raw
+            self.assertEqual(result.written, ["w:a"])
+            self.assertEqual(result.remaining, ["w:b", "w:c"])
+            # the page that DID land is baselined — re-run converges
+            self.assertIn("w:a", deploy_export.load_manifest(mpath))
+            self.assertNotIn("w:b", deploy_export.load_manifest(mpath))
+
+    def test_resolved_orphans_dropped_from_manifest(self):
+        client = FakeClient({"w:a": "x\n"})
+        staged = {"w:a": "x\n"}
+        manifest = {"w:a": deploy_export.page_hash("x\n"), "w:gone": "h"}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            self._apply(plan, staged, client, manifest, mpath)
+            self.assertNotIn("w:gone", manifest)
+            self.assertNotIn("w:gone", deploy_export.load_manifest(mpath))
 
 
 if __name__ == "__main__":
