@@ -460,9 +460,15 @@ missing-page contract, and the protected-page guard) and writes nothing.
 With `--go` it also deploys, edits, drift-tests, `--overwrite`s, and
 resume-after-crash-tests a small probe page under `<ns>:live-wiki-check:` —
 using its own temporary workspace and manifest, never the real
-`<workspace>/.bunnyforge/wiki-manifest.json` — and probes two RPC edge
-cases (`core.savePage` refusing an empty page; the `~~NOTOC~~` placeholder
-body saving as non-empty). Every write check reuses the same handful of
+`<workspace>/.bunnyforge/wiki-manifest.json` — probes two RPC edge cases
+(`core.savePage` refusing an empty page; the `~~NOTOC~~` placeholder body
+saving as non-empty), and publishes a hand-built pair of cross-linked pages
+to confirm that a rewritten absolute link — `[[<ns>:<dir>:<stem>|label]]`,
+the form `deploy-export`'s link rewriter emits — resolves from the wiki
+root when followed from *inside* an included page, the shape every
+reader-facing page actually takes (via `core.getPageHTML`; the check
+reports itself SKIPPED rather than failing if that RPC method is absent on
+an older DokuWiki release). Every write check reuses the same handful of
 stable page IDs, so running it repeatedly updates those same pages in place
 rather than piling up new ones. **This tool cannot delete wiki pages**, so
 neither can this script — it prints the page IDs it touched at the end, and
