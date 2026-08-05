@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest import mock
 
@@ -374,6 +375,86 @@ class TestResolveWorkspace(unittest.TestCase):
                                return_value=root):
             ws = _config.resolve_workspace("")
         self.assertEqual(ws.root, root)
+
+
+class TestWikiConfig(unittest.TestCase):
+    def _load(self, toml_text):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "campaign.toml").write_text(toml_text, encoding="utf-8")
+            return _config.load(root)
+
+    def test_wiki_url_parsed(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n'
+                         '[wiki]\nurl = "https://wiki.example"\n')
+        self.assertEqual(cfg.wiki_url, "https://wiki.example")
+
+    def test_wiki_table_absent_is_none(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n')
+        self.assertIsNone(cfg.wiki_url)
+
+    def test_wiki_url_non_string_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n[wiki]\nurl = 7\n')
+
+    def test_wiki_non_table_refused(self):
+        # `wiki = "x"` must precede any table header, same TOML-scoping trap
+        # noted in TestConfigLoad.test_names_section_must_be_a_table: a bare
+        # key after [campaign] would be swallowed into campaign.wiki rather
+        # than staying a top-level `wiki` key, and this test would then
+        # assert nothing.
+        with self.assertRaises(_config.ConfigError):
+            self._load('wiki = "x"\n[campaign]\nnamespace = "test"\n')
+
+
+class TestWikiToken(unittest.TestCase):
+    def _token_file(self, root: Path, text, mode=0o600):
+        path = root / ".bunnyforge" / "wiki-token"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        path.chmod(mode)
+        return path
+
+    def test_env_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._token_file(Path(d), "filetoken\n")
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "envtoken"}):
+                self.assertEqual(_config.resolve_wiki_token(Path(d)), "envtoken")
+
+    def test_file_fallback_strips_trailing_whitespace(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._token_file(Path(d), "tok123\n")
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                self.assertEqual(_config.resolve_wiki_token(Path(d)), "tok123")
+
+    def test_group_readable_file_refused_with_chmod_instruction(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._token_file(Path(d), "tok123\n", mode=0o644)
+            # Wrapped in patch.dict so the pop below is undone on exit
+            # regardless of ambient state or test outcome — a bare pop with
+            # no restore would permanently delete a pre-existing
+            # BUNNYFORGE_WIKI_TOKEN from the test process for every test
+            # that runs after this one.
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                with self.assertRaises(_config.ConfigError) as ctx:
+                    _config.resolve_wiki_token(Path(d))
+                self.assertIn("chmod 600", str(ctx.exception))
+
+    def test_missing_both_names_both_sources(self):
+        with tempfile.TemporaryDirectory() as d:
+            # See test_group_readable_file_refused_with_chmod_instruction
+            # above for why the pop is wrapped rather than bare.
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                with self.assertRaises(_config.ConfigError) as ctx:
+                    _config.resolve_wiki_token(Path(d))
+                msg = str(ctx.exception)
+                self.assertIn("BUNNYFORGE_WIKI_TOKEN", msg)
+                self.assertIn(".bunnyforge/wiki-token", msg)
+                self.assertIn("API token", msg)  # says where a token comes from
 
 
 if __name__ == "__main__":
