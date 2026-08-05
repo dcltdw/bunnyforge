@@ -1,5 +1,15 @@
 # Player-facing wiki export (design)
 
+> **Partially superseded (2026-08-05):** the transport half of this design
+> (sequencing steps 6–8: rsync, `receive_export.sh`, `indexer.php`, the
+> server-side `manifest.json`) is superseded by
+> [2026-08-05-deploy-export-rpc-transport-design.md](2026-08-05-deploy-export-rpc-transport-design.md),
+> which replaces it with DokuWiki's JSON-RPC API. The render half — namespace
+> layout, wrapper format, ACL design, wikilink rewriting, leak-test posture —
+> is shipped and untouched. The drift guarantee carries over verbatim; the
+> open absolute-link verification item carries into the new spec's
+> first-deploy checklist.
+
 > **Provenance:** a scrubbed copy of a development record from the
 > private campaign repository where this tool was first built. Campaign
 > identifiers are neutralised throughout; the verbatim original stays in
