@@ -271,6 +271,10 @@ do not include it:
 url = "https://<wiki>"
 ```
 
+(The same table can also carry `install_root`, an unrelated key read only by
+the `wiki` review suite below — a local filesystem path, never sent over the
+wire.)
+
 `https://` is required. A plain `http://` URL is refused — the token would
 cross the wire in clear — except for `localhost`, `127.0.0.1`, or `::1`,
 where a local test install has nothing to leak.
@@ -527,6 +531,20 @@ Asserts configuration invariants of a **live DokuWiki install** — the only
 checks here that look outside the workspace. `--wiki-root` is the installation
 root, the directory holding `conf/` and `lib/`. (Note that is *not* the same
 path as `import_perceptions`'s `--wiki-data`, which points at `data/`.)
+
+That path does not change between runs, so rather than retyping it every time,
+name it once in `campaign.toml`:
+
+```toml
+[wiki]
+install_root = "/path/to/a/wiki/copy"
+```
+
+`--wiki-root` still wins when both are given. Either way the value is
+expanded (`~`) and resolved the same way before use. Neither supplied is an
+error naming both routes; this key does not acquire the copy for you — it
+must already exist on disk, however obtained (a mount, an unpacked backup, a
+synced folder).
 
 **Run it after every DokuWiki upgrade.** An upgrade is precisely when this
 drifts, and the two worst failures on record were both config drift that no

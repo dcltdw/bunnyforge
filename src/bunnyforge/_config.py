@@ -35,8 +35,12 @@ Config = namedtuple(
     "Config",
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
-    "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url",
-    defaults=[None])  # wiki_url only — [wiki] is optional and network-only
+    "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url "
+    "wiki_install_root",
+    # wiki_url and wiki_install_root only — [wiki] is entirely optional: the
+    # RPC transport needs a URL, the `wiki` review suite needs a local
+    # install root, and a workspace using neither leaves both None.
+    defaults=[None, None])
 
 
 class ConfigError(Exception):
@@ -194,6 +198,9 @@ def load(workspace: Path) -> Config:
     wiki_url = wiki.get("url")
     if wiki_url is not None and not isinstance(wiki_url, str):
         raise ConfigError(f"{path}: wiki.url must be a string")
+    wiki_install_root = wiki.get("install_root")
+    if wiki_install_root is not None and not isinstance(wiki_install_root, str):
+        raise ConfigError(f"{path}: wiki.install_root must be a string")
 
     entity_dirs = _str_tuple(ws, "entity_dirs")
     inherit_dirs = _str_tuple(ws, "inherit_dirs")
@@ -226,6 +233,7 @@ def load(workspace: Path) -> Config:
         perceptions_dir=_str(ws, "perceptions_dir"),
         type_dirs=_type_dirs(ws),
         wiki_url=wiki_url,
+        wiki_install_root=wiki_install_root,
     )
 
 
