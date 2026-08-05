@@ -118,12 +118,44 @@ no API token stored anywhere.
 
 4. Watch `publish.yml`. It verifies the tag against `pyproject.toml`, builds
    the sdist and wheel, and uploads.
-5. Bump the pin in any campaign that depends on this package, in its own
+5. Confirm the release is actually **installable**, in a clean virtualenv on
+   a path holding no checkout:
+
+       pip install bunnyforge==X.Y.Z
+       pip show bunnyforge          # check the version it really installed
+
+   Check the version it reports rather than trusting the workflow's green
+   tick — see the note on index lag below.
+6. Bump the pin in any campaign that depends on this package, in its own
    commit, so the upgrade is deliberate and its drift guard can report what
    changed underneath it.
 
 Note that PyPI never releases a name and never lets a version number be
 reused, even after deletion — so step 2 is the one to get right.
+
+### Index lag, right after a release
+
+For a few minutes after a successful publish, PyPI may still serve the
+*previous* version to some clients. Expect any of these, and do not go
+looking for a bug:
+
+- `pip install bunnyforge` quietly installs the older version — which is why
+  step 5 checks what actually landed rather than assuming;
+- a consuming project's CI fails with
+
+      ERROR: Could not find a version that satisfies the requirement
+      bunnyforge==X.Y.Z (from versions: <older>)
+
+  on a clean runner with no cache involved.
+
+The fix is to wait a few minutes and re-run. Two things that mislead here:
+`https://pypi.org/pypi/bunnyforge/json` can report the new version while the
+simple index a given client reaches has not caught up, and `--no-cache-dir`
+does not help, because the staleness is not local. Different machines
+disagree at the same moment.
+
+All three of these were observed within minutes of one release; each
+resolved on its own with no change.
 
 ## License
 
