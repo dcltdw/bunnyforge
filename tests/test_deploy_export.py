@@ -861,5 +861,67 @@ class TestManifest(unittest.TestCase):
             self.assertIn(str(path), str(ctx.exception))
 
 
+class TestStagedPages(unittest.TestCase):
+    def test_ids_and_placeholder_translation(self):
+        with tempfile.TemporaryDirectory() as d:
+            staging = Path(d)
+            page = staging / NS / "export" / "mechanics" / "rule.txt"
+            page.parent.mkdir(parents=True)
+            page.write_text("body\n", encoding="utf-8")
+            ph = staging / NS / "npcs" / "ghost.txt"
+            ph.parent.mkdir(parents=True)
+            ph.write_bytes(b"")  # zero-byte placeholder: savePage refuses
+            staged = deploy_export.staged_pages(staging)
+            self.assertEqual(staged[f"{NS}:export:mechanics:rule"], "body\n")
+            self.assertEqual(staged[f"{NS}:npcs:ghost"],
+                             deploy_export.PLACEHOLDER_BODY)
+
+
+class TestPlanDeploy(unittest.TestCase):
+    def test_classifies_and_finds_orphans(self):
+        wiki = {"w:a": "old\n", "w:gone-from-workspace": "still here\n"}
+        staged = {"w:a": "new\n", "w:b": "fresh\n"}
+        manifest = {"w:a": deploy_export.page_hash("old\n"),
+                    "w:gone-from-workspace": "x",
+                    "w:resolved": "y"}  # deleted on wiki by a human
+        plan = deploy_export.plan_deploy(staged, manifest, wiki.get, "w")
+        self.assertEqual(plan.pages["w:a"].action, "update")
+        self.assertEqual(plan.pages["w:b"].action, "new")
+        self.assertEqual(plan.orphans, ["w:gone-from-workspace"])
+        self.assertEqual(plan.resolved_orphans, ["w:resolved"])
+
+    def test_protected_pages_never_fetched_never_planned(self):
+        fetched = []
+
+        def fetch(pid):
+            fetched.append(pid)
+            return None
+
+        staged = {"w:main": "x\n", "w:players:notes": "x\n", "w:ok": "x\n"}
+        plan = deploy_export.plan_deploy(staged, {}, fetch, "w")
+        self.assertEqual(sorted(plan.refused), ["w:main", "w:players:notes"])
+        self.assertNotIn("w:main", plan.pages)
+        self.assertNotIn("w:main", fetched)
+        self.assertNotIn("w:players:notes", fetched)
+        self.assertIn("w:ok", plan.pages)
+
+
+class TestWriteOrder(unittest.TestCase):
+    def test_content_lands_immediately_before_its_wrapper(self):
+        ids = [f"{NS}:export:npcs:ana", f"{NS}:npcs:ana",
+               f"{NS}:export:npcs:bob", f"{NS}:npcs:bob",
+               f"{NS}:aaa-placeholder"]
+        order = deploy_export.write_order(ids, NS)
+        self.assertEqual(order, [
+            f"{NS}:aaa-placeholder",
+            f"{NS}:export:npcs:ana", f"{NS}:npcs:ana",
+            f"{NS}:export:npcs:bob", f"{NS}:npcs:bob",
+        ])
+
+    def test_unpaired_content_page_stays_sorted(self):
+        ids = [f"{NS}:export:npcs:solo"]
+        self.assertEqual(deploy_export.write_order(ids, NS), ids)
+
+
 if __name__ == "__main__":
     unittest.main()

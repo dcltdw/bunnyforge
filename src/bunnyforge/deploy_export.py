@@ -402,6 +402,80 @@ def save_manifest(path: Path, pages: dict[str, str]) -> None:
     path.write_text(body + "\n", encoding="utf-8")
 
 
+# core.savePage refuses to create an empty page (error 132), so the render
+# half's zero-byte placeholder cannot cross RPC as-is. ~~NOTOC~~ renders
+# nothing, so the page displays blank while being non-empty and existing —
+# which is all a placeholder is for. The one place staged bytes are not sent
+# verbatim, and it carries no content.
+PLACEHOLDER_BODY = "~~NOTOC~~\n"
+
+PagePlan = namedtuple("PagePlan", "action wiki_text")
+DeployPlan = namedtuple("DeployPlan", "pages orphans resolved_orphans refused")
+
+
+def staged_pages(staging: Path) -> dict[str, str]:
+    """Page ID -> text for every staged page, placeholder translation applied."""
+    out: dict[str, str] = {}
+    for path in sorted(staging.rglob("*.txt")):
+        rel = path.relative_to(staging)
+        pid = ":".join((*rel.parts[:-1], rel.stem))
+        text = path.read_text(encoding="utf-8")
+        out[pid] = text if text else PLACEHOLDER_BODY
+    return out
+
+
+def _protected(staged_ids, base: str) -> list[str]:
+    """Belt and braces: the render half never generates these, but a render
+    bug must not become a wiki write. Never fetched, never written."""
+    names = {f"{base}:{name}" for name in PROTECTED_PAGE_NAMES}
+    prefix = f"{base}:players:"
+    return sorted(pid for pid in staged_ids
+                  if pid in names or pid.startswith(prefix))
+
+
+def plan_deploy(staged: dict[str, str], manifest: dict[str, str],
+                fetch, base: str) -> DeployPlan:
+    refused = _protected(staged, base)
+    pages: dict[str, PagePlan] = {}
+    for pid in sorted(staged):
+        if pid in refused:
+            continue
+        wiki_text = fetch(pid)
+        pages[pid] = PagePlan(
+            classify_page(staged[pid], wiki_text, manifest.get(pid)),
+            wiki_text)
+    orphans: list[str] = []
+    resolved: list[str] = []
+    for pid in sorted(set(manifest) - set(staged)):
+        # An orphan whose wiki page a human has since deleted resolves
+        # itself: it drops from the manifest (in --go) instead of being
+        # reported forever.
+        (orphans if fetch(pid) is not None else resolved).append(pid)
+    return DeployPlan(pages, orphans, resolved, refused)
+
+
+def write_order(page_ids, base: str) -> list[str]:
+    """Sorted page order, except each content page lands immediately before
+    its wrapper — so a wrapper never points at a not-yet-written include for
+    longer than one call."""
+    ids = sorted(page_ids)
+    present = set(ids)
+    export_prefix = f"{base}:export:"
+
+    def wrapper_of(pid: str) -> str:
+        return f"{base}:{pid[len(export_prefix):]}"
+
+    order: list[str] = []
+    for pid in ids:
+        if pid.startswith(export_prefix) and wrapper_of(pid) in present:
+            continue  # emitted just before its wrapper below
+        mate = f"{export_prefix}{pid[len(base) + 1:]}"
+        if mate in present:
+            order.append(mate)
+        order.append(pid)
+    return order
+
+
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
