@@ -1,6 +1,11 @@
+import email.message
+import http.client
+import io
 import json
+import ssl
 import unittest
 import urllib.error
+import urllib.request
 from unittest import mock
 
 from bunnyforge import _dokuwiki_rpc as rpc
@@ -35,7 +40,15 @@ class TestRequestShape(unittest.TestCase):
         self.assertEqual(
             request.full_url, "https://<wiki>/lib/exe/jsonrpc.php/core.getPage")
         self.assertEqual(request.get_method(), "POST")
+        # The token is an *unredirected* header: sent on the wire like any
+        # other, but never copied onto a redirected request. get_header falls
+        # back to unredirected_hdrs, so it cannot tell the two apart — assert
+        # on the exact dicts, which fails if the token moves back to the
+        # redirectable ones.
         self.assertEqual(request.get_header("Authorization"), "Bearer tok123")
+        self.assertEqual(request.unredirected_hdrs.get("Authorization"),
+                         "Bearer tok123")
+        self.assertNotIn("Authorization", request.headers)
         self.assertEqual(request.get_header("Content-type"), "application/json")
         self.assertTrue(request.get_header("User-agent").startswith("bunnyforge/"))
         self.assertEqual(json.loads(request.data.decode("utf-8")), {"page": "a:b"})
@@ -124,16 +137,24 @@ class TestUrlPolicy(unittest.TestCase):
 
 
 class TestDefaultTransport(unittest.TestCase):
+    """The real transport, with the opener's `open` stubbed — still no socket.
+
+    These patch `rpc._OPENER.open` rather than `urllib.request.urlopen`,
+    because the module deliberately does not use the default opener: the
+    default one forwards the Bearer token across redirects (see
+    TestRedirectRefusal).
+    """
+
     def test_urlerror_is_unreachable(self):
-        with mock.patch("urllib.request.urlopen",
-                        side_effect=urllib.error.URLError("dns fail")):
+        with mock.patch.object(rpc._OPENER, "open",
+                               side_effect=urllib.error.URLError("dns fail")):
             c = RpcClient("https://<wiki>", "t")
             with self.assertRaises(RpcError) as ctx:
                 c.call("m", {})
             self.assertEqual(ctx.exception.code, "unreachable")
 
     def test_timeout_is_unreachable(self):
-        with mock.patch("urllib.request.urlopen", side_effect=TimeoutError()):
+        with mock.patch.object(rpc._OPENER, "open", side_effect=TimeoutError()):
             c = RpcClient("https://<wiki>", "t")
             with self.assertRaises(RpcError) as ctx:
                 c.call("m", {})
@@ -141,7 +162,7 @@ class TestDefaultTransport(unittest.TestCase):
 
     def test_http_404_is_no_endpoint(self):
         err = urllib.error.HTTPError("u", 404, "nf", {}, None)
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch.object(rpc._OPENER, "open", side_effect=err):
             c = RpcClient("https://<wiki>", "t")
             with self.assertRaises(RpcError) as ctx:
                 c.call("m", {})
@@ -152,11 +173,140 @@ class TestDefaultTransport(unittest.TestCase):
         import io
         payload = json.dumps({"error": {"code": -32605, "message": "off"}}).encode()
         err = urllib.error.HTTPError("u", 403, "forbidden", {}, io.BytesIO(payload))
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch.object(rpc._OPENER, "open", side_effect=err):
             c = RpcClient("https://<wiki>", "t")
             with self.assertRaises(RpcError) as ctx:
                 c.call("m", {})
             self.assertEqual(ctx.exception.code, -32605)
+
+
+class TestMidStreamFailures(unittest.TestCase):
+    """urlopen only wraps OSError raised inside the request; anything raised
+    by getresponse() or resp.read() arrives unwrapped. Every one of them must
+    still become a one-line instructional RpcError, never a traceback — an
+    unhandled exception here also skips apply_deploy's written/not-written
+    report."""
+
+    def check(self, exc):
+        with mock.patch.object(rpc._OPENER, "open", side_effect=exc):
+            c = RpcClient("https://<wiki>", "t")
+            with self.assertRaises(RpcError) as ctx:
+                c.call("m", {})
+            self.assertEqual(ctx.exception.code, "unreachable")
+            self.assertTrue(ctx.exception.message)  # never an empty message
+            return ctx.exception
+
+    def test_remote_disconnected(self):
+        self.check(http.client.RemoteDisconnected(
+            "Remote end closed connection without response"))
+
+    def test_connection_reset(self):
+        self.check(ConnectionResetError(104, "Connection reset by peer"))
+
+    def test_incomplete_read(self):
+        self.check(http.client.IncompleteRead(b"partial"))
+
+    def test_ssl_error_mid_stream(self):
+        self.check(ssl.SSLError("record layer failure"))
+
+    def test_bare_httpexception_still_names_its_type(self):
+        # http.client.HTTPException is not an OSError, and a bare instance
+        # str()s to "" — the message must still say something usable.
+        exc = self.check(http.client.HTTPException())
+        self.assertIn("HTTPException", exc.message)
+
+
+class TestRedirectRefusal(unittest.TestCase):
+    """A JSON-RPC POST to lib/exe/jsonrpc.php/<method> never legitimately
+    redirects. urllib's default HTTPRedirectHandler copies every header except
+    content-length/content-type onto the redirected request — including
+    Authorization, and unlike requests it does not strip it on a host change —
+    and turns a 301/302/303 POST into a GET. So an ordinary apex->www or
+    https->http redirect would put a live campaign's API token in clear, or on
+    a host the user never configured. Refuse the redirect instead."""
+
+    def _headers(self, location):
+        msg = email.message.Message()
+        msg["Location"] = location
+        return msg
+
+    def _request(self):
+        return urllib.request.Request(
+            "https://<wiki>/lib/exe/jsonrpc.php/core.savePage",
+            data=b"{}",
+            headers={"Authorization": "Bearer SECRET",
+                     "Content-Type": "application/json"},
+            method="POST")
+
+    def test_a_real_client_request_carries_no_redirectable_token(self):
+        # Belt to _NoRedirect's braces, checked on a request the client
+        # actually built: even handed to the stock handler, there is no
+        # Authorization header for it to forward.
+        t = fake_transport([ok("x")])
+        RpcClient("https://<wiki>", "tok123", transport=t).call("core.getPage", {})
+        sent = t.calls[0][0]
+        new = urllib.request.HTTPRedirectHandler().redirect_request(
+            sent, io.BytesIO(b""), 302, "Found",
+            self._headers("http://<other-host>/collect"),
+            "http://<other-host>/collect")
+        self.assertNotIn("Authorization", new.headers)
+        self.assertNotIn("Authorization", new.unredirected_hdrs)
+        # ...while the wire request do_open assembles still carries it.
+        wire = dict(sent.unredirected_hdrs)
+        wire.update({k: v for k, v in sent.headers.items() if k not in wire})
+        self.assertEqual(wire["Authorization"], "Bearer tok123")
+
+    def test_stdlib_default_would_have_leaked_the_token(self):
+        # Pins the reason this module refuses redirects at all: if a future
+        # Python ever stops forwarding Authorization, this test fails and the
+        # refusal can be re-argued from evidence rather than from memory.
+        new = urllib.request.HTTPRedirectHandler().redirect_request(
+            self._request(), io.BytesIO(b""), 302, "Found",
+            self._headers("http://<other-host>/collect"),
+            "http://<other-host>/collect")
+        self.assertEqual(new.get_header("Authorization"), "Bearer SECRET")
+
+    def test_handler_refuses_and_names_the_fix(self):
+        with self.assertRaises(RpcError) as ctx:
+            rpc._NoRedirect().redirect_request(
+                self._request(), io.BytesIO(b""), 302, "Found",
+                self._headers("http://<other-host>/collect"),
+                "http://<other-host>/collect")
+        exc = ctx.exception
+        self.assertEqual(exc.code, "no-endpoint")
+        self.assertEqual(exc.method, "core.savePage")
+        self.assertIn("http://<other-host>/collect", exc.message)
+        self.assertIn("[wiki] url", exc.message)  # names the fix
+
+    def test_refusing_handler_is_installed_in_the_opener(self):
+        # Not just "the class exists": drive the opener's own error chain, so
+        # a build_opener call that failed to displace the stock
+        # HTTPRedirectHandler is caught here.
+        handlers = [type(h).__name__ for h in rpc._OPENER.handlers]
+        self.assertIn("_NoRedirect", handlers)
+        self.assertNotIn("HTTPRedirectHandler", handlers)
+        for code in (301, 302, 303, 307):
+            with self.subTest(code=code):
+                with self.assertRaises(RpcError) as ctx:
+                    rpc._OPENER.error(
+                        "http", self._request(), io.BytesIO(b""), code, "R",
+                        self._headers("https://<other-host>/x"))
+                self.assertEqual(ctx.exception.code, "no-endpoint")
+
+    def test_translation_reads_for_both_no_endpoint_causes(self):
+        redirect = rpc.translate_error(
+            RpcError("no-endpoint",
+                     "redirected to https://<other-host>/x — point [wiki] url "
+                     "at the wiki's canonical base URL; the API token is never "
+                     "sent to a redirect target",
+                     "core.savePage"),
+            "https://<wiki>")
+        self.assertIn("redirected to https://<other-host>/x", redirect)
+        self.assertIn("[wiki] url", redirect)
+        not_found = rpc.translate_error(
+            RpcError("no-endpoint", "HTTP 404", "core.getPage"), "https://<wiki>")
+        self.assertIn("HTTP 404", not_found)
+        self.assertIn(rpc.MIN_RELEASE, not_found)
 
 
 class TestTranslation(unittest.TestCase):

@@ -21,6 +21,7 @@ The transport is injectable so tests never construct a socket.
 
 from __future__ import annotations
 
+import http.client
 import importlib.metadata
 import json
 import urllib.error
@@ -48,8 +49,9 @@ except importlib.metadata.PackageNotFoundError:  # uninstalled checkout
 
 class RpcError(Exception):
     """A failed RPC call. `code` is the wiki's JSON-RPC error code, or one
-    of the transport sentinels 'unreachable' (DNS / refused / timeout) and
-    'no-endpoint' (HTTP 404, or a body that is not JSON)."""
+    of the transport sentinels 'unreachable' (DNS / refused / timeout /
+    connection dropped mid-response) and 'no-endpoint' (HTTP 404, a redirect,
+    or a body that is not JSON)."""
 
     def __init__(self, code, message, method):
         super().__init__(f"{method}: [{code}] {message}")
@@ -58,10 +60,43 @@ class RpcError(Exception):
         self.method = method
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect rather than following it.
+
+    urllib's stock HTTPRedirectHandler copies each header except
+    content-length/content-type onto the redirected request — Authorization
+    included — and, unlike `requests`, does *not* drop it when the host
+    changes. It also downgrades a 301/302/303 POST to GET. So a wiki whose
+    canonical URL redirects (apex -> www, or an https vhost that 301s to
+    http) would send a live campaign's API token in clear, or to a host the
+    user never configured in [wiki] url. The https-only check in RpcClient
+    guards the configured base URL only; it can say nothing about a redirect
+    target, so the token's guarantee has to be enforced here.
+
+    A JSON-RPC POST to lib/exe/jsonrpc.php/<method> has no legitimate reason
+    to redirect, so refusing costs nothing and the message points at the fix.
+    (Following it would not work anyway: the endpoint is POST-only and
+    answers a GET with -32606, which the error table reports as a bunnyforge
+    bug — a URL misconfiguration misdiagnosed as a tool defect.)
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RpcError(
+            "no-endpoint",
+            f"redirected to {newurl} — point [wiki] url at the wiki's "
+            "canonical base URL; the API token is never sent to a redirect "
+            "target",
+            req.full_url.rsplit("/", 1)[-1])
+
+
+# Never urlopen(): that uses the default opener, which follows redirects.
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _default_transport(request: urllib.request.Request, timeout: float) -> bytes:
     method = request.full_url.rsplit("/", 1)[-1]
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
+        with _OPENER.open(request, timeout=timeout) as resp:
             return resp.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -72,27 +107,40 @@ def _default_transport(request: urllib.request.Request, timeout: float) -> bytes
         raise RpcError("unreachable", str(exc.reason), method) from exc
     except TimeoutError as exc:
         raise RpcError("unreachable", "timed out", method) from exc
+    except (OSError, http.client.HTTPException) as exc:
+        # urlopen wraps only the OSError raised inside h.request(); anything
+        # from getresponse() or resp.read() arrives unwrapped —
+        # RemoteDisconnected, ConnectionResetError, IncompleteRead, a
+        # mid-stream ssl.SSLError. Unhandled they become a traceback, and
+        # inside apply_deploy they would also skip the written / not-yet-
+        # written / re-run report a partial deploy owes the user. Ordering
+        # matters: HTTPError and URLError are both OSError subclasses and
+        # carry better detail, so they are caught above.
+        raise RpcError("unreachable", str(exc) or type(exc).__name__,
+                       method) from exc
 
 
 class RpcClient:
     def __init__(self, base_url: str, token: str, timeout: float = 30.0,
                  transport=None):
         parts = urllib.parse.urlsplit(base_url)
+        # Is it a web URL at all, then is it a safe one — the general check
+        # before the specific, so the pair reads in the order it decides in.
+        if parts.scheme not in ("http", "https"):
+            raise ValueError(
+                f"[wiki] url {base_url} is not an http(s) URL — expected "
+                "the wiki's base URL, e.g. https://<wiki>")
         if parts.scheme == "http" and parts.hostname not in _LOCAL_HOSTS:
             raise ValueError(
                 f"[wiki] url {base_url} uses http:// — the API token would "
                 "cross the wire in clear. Use https:// (http is allowed only "
                 "for localhost test installs).")
-        if parts.scheme not in ("http", "https"):
-            raise ValueError(
-                f"[wiki] url {base_url} is not an http(s) URL — expected "
-                "the wiki's base URL, e.g. https://<wiki>")
         self._endpoint = base_url.rstrip("/") + "/" + ENDPOINT
         self._headers = {
-            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "User-Agent": f"bunnyforge/{_VERSION}",
         }
+        self._token = token
         self._timeout = timeout
         self._transport = transport or _default_transport
 
@@ -101,6 +149,13 @@ class RpcClient:
             f"{self._endpoint}/{method}",
             data=json.dumps(params).encode("utf-8"),
             headers=self._headers, method="POST")
+        # Second layer under _NoRedirect, and the reason the token is not in
+        # `headers` above. An unredirected header goes on the wire exactly
+        # like any other (do_open merges both dicts), but urllib's redirect
+        # machinery never copies it onto a redirected request — so the
+        # credential cannot follow a redirect even if this module were one
+        # day reached through the default opener.
+        request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         raw = self._transport(request, self._timeout)
         try:
             obj = json.loads(raw.decode("utf-8"))

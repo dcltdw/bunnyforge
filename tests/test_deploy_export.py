@@ -446,6 +446,89 @@ class TestNewCliSurface(unittest.TestCase):
             self.assertFalse(Path(captured["path"]).exists())
 
 
+class TestMainDrivesTheDeploy(unittest.TestCase):
+    """The main() -> run_deploy join, end to end.
+
+    Every other main() test either passes --render-only or bails before
+    run_deploy (no [wiki], no token, http:// url, unresolved link), so the one
+    seam no per-function test can see — that what render_tree wrote is what
+    the transport half then plans and writes — had no coverage at all.
+
+    deploy_export.RpcClient is patched rather than a new injection parameter
+    being added to main(): the seam is a composition detail, and widening
+    main()'s signature for a test would put a test-only argument on the
+    package's public CLI entry point.
+    """
+
+    def test_go_deploys_every_rendered_page_and_records_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
+            make_export(d / "Export", {"Mechanics/open.md": "# Open\n",
+                                       "NPCs/ana.md": "# Ana\n"})
+            client = FakeClient()
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
+                unittest.mock.patch.object(
+                    deploy_export, "RpcClient", return_value=client):
+                rc, out, err = run_main(["--workspace", str(d), "--go"])
+
+            self.assertEqual(rc, 0, err)
+            ns = namespace_of(d)
+            # Derived from the render half's own page_id, so this asserts the
+            # join rather than restating a hand-written literal.
+            expected = sorted(
+                [deploy_export.page_id(rel, ns) for rel in
+                 ("Mechanics/open.md", "NPCs/ana.md")] +
+                [deploy_export.page_id(rel, f"{ns}:export") for rel in
+                 ("Mechanics/open.md", "NPCs/ana.md")])
+            self.assertEqual(sorted(client.saves), expected)
+            manifest = deploy_export.load_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json")
+            self.assertEqual(sorted(manifest), expected)
+            self.assertIn("Deployed 4 page(s)", out)
+
+    def test_default_run_is_a_dry_run_that_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
+            make_export(d / "Export", {"NPCs/ana.md": "# Ana\n"})
+            client = FakeClient()
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
+                unittest.mock.patch.object(
+                    deploy_export, "RpcClient", return_value=client):
+                rc, out, err = run_main(["--workspace", str(d)])
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(client.saves, [])
+            self.assertIn("2 page(s) would be written", out)
+            self.assertFalse((d / ".bunnyforge" / "wiki-manifest.json").exists())
+
+    def test_deploy_error_from_run_deploy_is_reported_not_raised(self):
+        # main()'s `except DeployError` arm — now reachable in a dry run too,
+        # since --overwrite is validated in both modes.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
+            make_export(d / "Export", {"NPCs/ana.md": "# Ana\n"})
+            client = FakeClient()
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
+                unittest.mock.patch.object(
+                    deploy_export, "RpcClient", return_value=client):
+                rc, _out, err = run_main(
+                    ["--workspace", str(d), "--overwrite", "test:npcs:typo"])
+            self.assertEqual(rc, 1)
+            self.assertIn("test:npcs:typo", err)
+            self.assertEqual(client.saves, [])
+
+
 class TestLinkPolicy(unittest.TestCase):
     def _workspace(self, d):
         root = make_export(d / "ws", {
@@ -1147,6 +1230,66 @@ class TestApplyDeploy(unittest.TestCase):
             self.assertIn("w:a", deploy_export.load_manifest(mpath))
             self.assertNotIn("w:b", deploy_export.load_manifest(mpath))
 
+    def test_midrun_edit_is_skipped_not_clobbered(self):
+        # The spec's drift guarantee — "a quick wiki edit made mid-run
+        # survives, rather than being silently clobbered by the following
+        # deploy" — has to hold *within* one --go run too. plan_deploy fetches
+        # every page up front, so on a real campaign the window between a
+        # page's fetch and its save is the whole fetch loop plus the report.
+        client = FakeClient()
+        staged = {"w:a": "ours\n", "w:b": "ours\n"}
+        manifest = {}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            # A human edits w:b after it was planned as `new`.
+            client.pages["w:b"] = "human edit\n"
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertEqual(client.saves, ["w:a"])
+            self.assertEqual(result.written, ["w:a"])
+            self.assertEqual(result.skipped, ["w:b"])
+            self.assertIsNone(result.failure)   # a skip is not a save failure
+            self.assertNotIn("w:b", manifest)   # and never re-baselined
+            self.assertEqual(client.pages["w:b"], "human edit\n")
+
+    def test_overwrite_does_not_license_clobbering_an_unreviewed_edit(self):
+        # --overwrite consents to clobbering the diff the plan showed. An
+        # edit that landed *after* that diff was printed was never reviewed,
+        # so it gets the same mid-run protection as any other page.
+        client = FakeClient({"w:a": "wiki edit\n"})
+        staged = {"w:a": "ours\n"}
+        manifest = {"w:a": deploy_export.page_hash("older\n")}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            client.pages["w:a"] = "a second, unreviewed edit\n"
+            result = self._apply(plan, staged, client, manifest, mpath,
+                                 overwrite=["w:a"])
+            self.assertEqual(client.saves, [])
+            self.assertEqual(result.skipped, ["w:a"])
+
+    def test_readback_of_none_is_a_failure_not_a_bogus_baseline(self):
+        # A page that reads back as absent right after a successful save
+        # means the write did not stick. Recording page_hash("") would put a
+        # knowingly-wrong baseline in the manifest; route it through the
+        # existing partial-failure path instead, which reports and exits 1.
+        class Amnesiac(FakeClient):
+            def save_page(self, pid, text, summary=None):
+                self.saves.append(pid)  # accepted, but nothing is stored
+
+        client = Amnesiac()
+        staged = {"w:a": "ours\n"}
+        manifest = {}
+        with tempfile.TemporaryDirectory() as d:
+            mpath = Path(d) / "m.json"
+            plan = deploy_export.plan_deploy(staged, manifest, client.get_page, "w")
+            result = self._apply(plan, staged, client, manifest, mpath)
+            self.assertIsNotNone(result.failure)
+            self.assertIn("w:a", result.failure)
+            self.assertEqual(result.written, [])
+            self.assertNotIn("w:a", manifest)
+            self.assertNotIn("w:a", deploy_export.load_manifest(mpath))
+
     def test_resolved_orphans_dropped_from_manifest(self):
         client = FakeClient({"w:a": "x\n"})
         staged = {"w:a": "x\n"}
@@ -1278,6 +1421,73 @@ class TestRunDeploy(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(client.saves, [])
             self.assertIn("adopt", out)
+
+    def test_overwrite_of_unheld_page_refused_in_both_modes(self):
+        # A dry run's whole value is fidelity to the run it rehearses. Before
+        # this, `--overwrite <typo>` printed a plan labelling that page
+        # `overwrite` and counted it in "N page(s) would be written", while
+        # the same invocation with --go refused outright.
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "x\n"})
+            for go in (False, True):
+                with self.subTest(go=go):
+                    client = FakeClient()
+                    with self.assertRaises(deploy_export.DeployError) as ctx:
+                        self._run(d, staging, client, go=go,
+                                  overwrite=["test:npcs:typo"])
+                    self.assertIn("test:npcs:typo", str(ctx.exception))
+                    self.assertEqual(client.saves, [])
+
+    def test_midrun_edit_is_reported_and_exits_nonzero(self):
+        class EditingClient(FakeClient):
+            """A human editing the wiki mid-run: the first save this deploy
+            performs is the moment their edit lands."""
+
+            def __init__(self, pages=None, edits=None):
+                super().__init__(pages)
+                self.edits = dict(edits or {})
+
+            def save_page(self, pid, text, summary=None):
+                super().save_page(pid, text, summary)
+                self.pages.update(self.edits)
+                self.edits = {}
+
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "ours\n",
+                                      "test:npcs:bob": "ours\n"})
+            client = EditingClient(edits={"test:npcs:bob": "human edit\n"})
+            rc, out = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 1)                       # never a silent skip
+            self.assertEqual(client.saves, ["test:npcs:ana"])
+            self.assertIn("test:npcs:bob", out)
+            self.assertIn("SKIPPED", out)
+            self.assertIn("Re-run", out)                  # names the next step
+            self.assertEqual(client.pages["test:npcs:bob"], "human edit\n")
+            manifest = deploy_export.load_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json")
+            self.assertNotIn("test:npcs:bob", manifest)
+
+    def test_resolved_orphan_alone_exits_zero(self):
+        # The exit-code contract counts held-back pages and *reported*
+        # orphans. A resolved orphan is neither: the human already deleted
+        # the page, so the run's only job is to drop it from the manifest and
+        # say so. Nothing was held back, so the run is clean.
+        with tempfile.TemporaryDirectory() as d:
+            d = make_workspace(Path(d))
+            staging = self._stage(d, {"test:npcs:ana": "x\n"})
+            client = FakeClient({"test:npcs:ana": "x\n"})  # :gone is absent
+            deploy_export.save_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json",
+                {"test:npcs:ana": deploy_export.page_hash("x\n"),
+                 "test:npcs:gone": "somehash"})
+            rc, out = self._run(d, staging, client, go=True)
+            self.assertEqual(rc, 0)
+            self.assertIn("resolved", out)
+            self.assertIn("test:npcs:gone", out)
+            self.assertNotIn("test:npcs:gone", deploy_export.load_manifest(
+                d / ".bunnyforge" / "wiki-manifest.json"))
 
     def test_drift_dir_recreated_each_planning_run(self):
         with tempfile.TemporaryDirectory() as d:

@@ -275,15 +275,24 @@ url = "https://<wiki>"
 cross the wire in clear — except for `localhost`, `127.0.0.1`, or `::1`,
 where a local test install has nothing to leak.
 
+That check can only vet the URL you configured, so **redirects are refused
+too**, rather than followed. A wiki whose canonical URL redirects (apex to
+`www`, or an `https` vhost that `301`s to `http`) would otherwise carry the
+`Authorization` header onto the redirect target: `urllib` forwards it even
+across a host change. Point `[wiki] url` at the wiki's canonical base URL —
+the JSON-RPC endpoint has no legitimate reason to redirect.
+
 It also needs a DokuWiki API token, resolved in order:
 
 1. the `BUNNYFORGE_WIKI_TOKEN` environment variable, or
 2. a single line in `<workspace>/.bunnyforge/wiki-token`.
 
 The token file is refused, with a `chmod 600 <path>` instruction, if it is
-readable by group or world — a wiki credential must be private. Create the
-token on the wiki itself: log in as the deploy user, open its profile, and
-generate an API token there.
+readable by group or world — a wiki credential must be private. Its
+directory is checked too: a `.bunnyforge/` writable by group or world is
+refused with `chmod 700 <path>`, because anyone who can write the directory
+can replace the credential inside it. Create the token on the wiki itself:
+log in as the deploy user, open its profile, and generate an API token there.
 
 ### The manifest
 
@@ -324,6 +333,15 @@ behind); `deleted-on-wiki` has no wiki text to diff or copy. The resolution
 is the same for all three: either pull the wiki edit into the workspace
 source — the next render then matches and the drift disappears — or re-run
 with `--overwrite <page-id> --go` to clobber it and re-baseline.
+
+The same guarantee holds **within** a single `--go` run. The plan fetches
+every page up front, so on a large campaign tens of seconds pass between a
+page being read and being written. Each page is therefore re-read immediately
+before its save, and a page whose wiki text changed in that window is
+reported `SKIPPED` and left alone — the run exits non-zero and the next plan
+reports it as ordinary drift, with a diff. This applies to `--overwrite`
+pages too: `--overwrite` consents to clobbering the diff the plan printed,
+and an edit that landed after that diff was never reviewed.
 
 ### Orphans
 

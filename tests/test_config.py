@@ -443,6 +443,37 @@ class TestWikiToken(unittest.TestCase):
                     _config.resolve_wiki_token(Path(d))
                 self.assertIn("chmod 600", str(ctx.exception))
 
+    def test_world_writable_parent_dir_refused_with_chmod_instruction(self):
+        # A private token file inside a directory anyone can write is not
+        # private: whoever can write .bunnyforge/ can unlink the token and
+        # drop their own in its place, and the deploy would then authenticate
+        # to a wiki with a credential it did not choose. Checking the file's
+        # own mode says nothing about that.
+        with tempfile.TemporaryDirectory() as d:
+            path = self._token_file(Path(d), "tok123\n")
+            path.parent.chmod(0o777)
+            try:
+                with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                    with self.assertRaises(_config.ConfigError) as ctx:
+                        _config.resolve_wiki_token(Path(d))
+                    msg = str(ctx.exception)
+                    self.assertIn("chmod 700", msg)
+                    self.assertIn(str(path.parent), msg)
+            finally:
+                # Leave the tree removable regardless of the assertions above.
+                path.parent.chmod(0o700)
+
+    def test_group_readable_parent_dir_is_fine(self):
+        # mkdir under a normal umask leaves 0o755. Readable is not writable,
+        # and refusing it would fail every ordinary workspace.
+        with tempfile.TemporaryDirectory() as d:
+            path = self._token_file(Path(d), "tok123\n")
+            path.parent.chmod(0o755)
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                self.assertEqual(_config.resolve_wiki_token(Path(d)), "tok123")
+
     def test_missing_both_names_both_sources(self):
         with tempfile.TemporaryDirectory() as d:
             # See test_group_readable_file_refused_with_chmod_instruction

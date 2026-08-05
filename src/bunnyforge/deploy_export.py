@@ -555,11 +555,48 @@ def write_order(page_ids, base: str) -> list[str]:
     return order
 
 
-ApplyResult = namedtuple("ApplyResult", "written adopted failure remaining")
+ApplyResult = namedtuple("ApplyResult", "written adopted failure remaining skipped")
 
 # Held-back actions: written only when named in --overwrite, and always
 # re-baselined when written.
 _HELD = ("drift", "drift-manual-era", "deleted-on-wiki")
+
+
+def held_page_ids(plan: DeployPlan, overwrite=frozenset()) -> list[str]:
+    """Page IDs this run holds back: a held-back action, not named in
+    --overwrite. Sorted.
+
+    This is the predicate deciding whether someone's wiki edit gets clobbered,
+    so it has exactly one definition. Called with the default empty
+    `overwrite` it is instead the set of pages --overwrite may legitimately
+    name — the same predicate before the escape hatch is applied, which is
+    precisely what validating --overwrite needs.
+    """
+    return sorted(pid for pid, p in plan.pages.items()
+                  if p.action in _HELD and pid not in overwrite)
+
+
+def pages_to_write(plan: DeployPlan, overwrite: set[str]) -> list[str]:
+    """Page IDs this run writes: new or update, plus anything --overwrite
+    named. Shared by apply_deploy and the dry run's count, so the rehearsal
+    cannot drift from the run it rehearses."""
+    return [pid for pid, p in plan.pages.items()
+            if p.action in ("new", "update") or pid in overwrite]
+
+
+def check_overwrite(plan: DeployPlan, overwrite: set[str]) -> None:
+    """Refuse an --overwrite naming a page this run did not hold back — a
+    typo'd page ID, or one that stopped drifting since the last run.
+
+    Called from run_deploy so a dry run refuses exactly what --go refuses; a
+    rehearsal that disagreed with the real run is worse than no rehearsal.
+    apply_deploy calls it again, because it is independently reachable.
+    """
+    unknown = sorted(set(overwrite) - set(held_page_ids(plan)))
+    if unknown:
+        raise DeployError(
+            f"--overwrite names page(s) not held back this run: "
+            f"{', '.join(unknown)} — nothing to clobber.")
 
 
 def apply_deploy(plan: DeployPlan, staged: dict[str, str], client,
@@ -569,17 +606,19 @@ def apply_deploy(plan: DeployPlan, staged: dict[str, str], client,
     through to disk after each successful save, so a run that dies mid-way
     needs no resume machinery — re-running converges (unchanged / adopt).
     """
-    held = {pid for pid, p in plan.pages.items() if p.action in _HELD}
-    unknown = sorted(overwrite - held)
-    if unknown:
-        raise DeployError(
-            f"--overwrite names page(s) not held back this run: "
-            f"{', '.join(unknown)} — nothing to clobber.")
+    check_overwrite(plan, overwrite)
 
-    to_write = [pid for pid, p in plan.pages.items()
-                if p.action in ("new", "update") or pid in overwrite]
+    to_write = pages_to_write(plan, overwrite)
+    order = write_order(to_write, base)
     written: list[str] = []
     adopted: list[str] = []
+    skipped: list[str] = []
+
+    def _remaining():
+        # A skipped page was decided on, not left undone, and is reported on
+        # its own line — listing it as "not yet written" would read as work
+        # the re-run must still do.
+        return [i for i in order if i not in written and i not in skipped]
 
     for pid, p in plan.pages.items():
         if p.action == "adopt":
@@ -590,21 +629,45 @@ def apply_deploy(plan: DeployPlan, staged: dict[str, str], client,
     if adopted or plan.resolved_orphans:
         save_manifest(manifest_path, manifest)
 
-    for pid in write_order(to_write, base):
+    for pid in order:
         try:
+            # Re-read immediately before writing. plan_deploy fetched every
+            # page up front, so on a real campaign the gap between a page's
+            # fetch and its save is the whole fetch loop plus the report —
+            # tens of seconds in which the spec's guarantee ("a quick wiki
+            # edit made mid-run survives, rather than being silently
+            # clobbered") would otherwise hold only *between* runs. The run
+            # already pays one get_page per written page for the read-back
+            # baseline; a second is affordable at campaign scale.
+            #
+            # This applies to --overwrite pages too: --overwrite consents to
+            # clobbering the diff the plan printed, and an edit that landed
+            # after that diff was never reviewed.
+            if client.get_page(pid) != plan.pages[pid].wiki_text:
+                skipped.append(pid)
+                continue
             client.save_page(pid, staged[pid])
             readback = client.get_page(pid)
         except RpcError as exc:
-            remaining = [i for i in write_order(to_write, base)
-                         if i not in written]
             return ApplyResult(
                 written, sorted(adopted),
-                f"{pid}: {translate_error(exc, wiki_url)}", remaining)
-        manifest[pid] = page_hash(readback or "")
+                f"{pid}: {translate_error(exc, wiki_url)}", _remaining(),
+                skipped)
+        if readback is None:
+            # The wiki accepted the save and then says the page does not
+            # exist. Whatever happened, there is no baseline to record:
+            # page_hash("") would be a knowingly-wrong entry that makes the
+            # page look drifted forever. Treat it as a failed save.
+            return ApplyResult(
+                written, sorted(adopted),
+                f"{pid}: saved, but reading the page back found nothing — the "
+                "wiki did not keep the write. Check the deploy user's ACL on "
+                "this page and re-run.", _remaining(), skipped)
+        manifest[pid] = page_hash(readback)
         save_manifest(manifest_path, manifest)
         written.append(pid)
 
-    return ApplyResult(written, sorted(adopted), None, [])
+    return ApplyResult(written, sorted(adopted), None, [], skipped)
 
 
 _HELD_REASONS = {
@@ -632,13 +695,12 @@ def write_drift_copies(held: dict[str, str], drift_dir: Path) -> None:
 def format_deploy_report(plan: DeployPlan, staged: dict[str, str],
                          overwrite: set[str], go: bool) -> tuple[list[str], bool]:
     lines: list[str] = []
-    held_pages = []
+    held_pages = held_page_ids(plan, overwrite)
+    held_set = set(held_pages)
     for pid in sorted(plan.pages):
-        p = plan.pages[pid]
-        if p.action in _HELD and pid not in overwrite:
-            held_pages.append(pid)
+        if pid in held_set:
             continue
-        word = "overwrite" if pid in overwrite else p.action
+        word = "overwrite" if pid in overwrite else plan.pages[pid].action
         lines.append(f"  {word:<12} {pid}")
     for pid in plan.refused:
         lines.append(f"  refused      {pid}  (protected page — never written)")
@@ -691,20 +753,34 @@ def run_deploy(ws, staging: Path, client, go: bool, overwrite: set[str],
         print(f"error: {translate_error(exc, wiki_url)}", file=sys.stderr)
         return 1
 
-    held = {pid: p.wiki_text for pid, p in plan.pages.items()
-            if p.action in _HELD and pid not in overwrite
-            and p.wiki_text is not None}
+    # Validated here, before any reporting, so a dry run refuses exactly what
+    # --go would refuse rather than printing a plan the real run rejects.
+    check_overwrite(plan, overwrite)
+
+    # deleted-on-wiki is held back too but has no wiki text to copy, hence
+    # the extra filter here and nowhere else.
+    held = {pid: plan.pages[pid].wiki_text
+            for pid in held_page_ids(plan, overwrite)
+            if plan.pages[pid].wiki_text is not None}
     # Copies are part of reporting, not deployment: written in both modes.
     write_drift_copies(held, ws.root / DRIFT_DIR)
 
     lines, held_or_orphaned = format_deploy_report(plan, staged, overwrite, go)
     print("\n".join(lines))
 
+    skipped: list[str] = []
     if go:
         result = apply_deploy(plan, staged, client, manifest, manifest_path,
                               overwrite, base, wiki_url)
+        skipped = result.skipped
         for pid in result.written:
             print(f"  saved        {pid}")
+        for pid in skipped:
+            # Loud, and on stderr: a silently skipped page would be worse
+            # than the clobber this check exists to prevent.
+            print(f"  SKIPPED      {pid} — changed on the wiki between this "
+                  "run's plan and its write; not written. Re-run: the next "
+                  "plan reports it as drift, with a diff.", file=sys.stderr)
         if result.failure:
             print(f"\nerror: {result.failure}", file=sys.stderr)
             print(f"Written before the failure: "
@@ -714,14 +790,13 @@ def run_deploy(ws, staging: Path, client, go: bool, overwrite: set[str],
                   "unchanged or adopt.", file=sys.stderr)
             return 1
         print(f"\nDeployed {len(result.written)} page(s), "
-              f"adopted {len(result.adopted)}.")
+              f"adopted {len(result.adopted)}."
+              + (f" Skipped {len(skipped)} changed mid-run." if skipped else ""))
     else:
-        writes = sum(1 for pid, p in plan.pages.items()
-                     if p.action in ("new", "update") or pid in overwrite)
-        print(f"\nDry run: {writes} page(s) would be written. "
-              "Re-run with --go to deploy.")
+        print(f"\nDry run: {len(pages_to_write(plan, overwrite))} page(s) "
+              "would be written. Re-run with --go to deploy.")
 
-    return 1 if held_or_orphaned else 0
+    return 1 if held_or_orphaned or skipped else 0
 
 
 if __name__ == "__main__":

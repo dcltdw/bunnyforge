@@ -59,6 +59,19 @@ def resolve_wiki_token(workspace_root: Path) -> str:
         return env
     path = workspace_root / TOKEN_FILE
     if path.is_file():
+        # The directory first: a token file nobody else can read is still not
+        # private if anyone can write the directory holding it — they can
+        # unlink it and leave their own credential in its place, and the next
+        # deploy authenticates with a token it did not choose. Group/world
+        # *readable* is fine and stays fine (mkdir under a normal umask leaves
+        # 0o755); only the write bits are refused.
+        parent_mode = stat.S_IMODE(path.parent.stat().st_mode)
+        if parent_mode & 0o022:
+            raise ConfigError(
+                f"{path.parent} is writable by group or world (mode "
+                f"{parent_mode:03o}) — anyone who can write that directory "
+                f"can replace the wiki credential in it:\n"
+                f"  chmod 700 {path.parent}")
         mode = stat.S_IMODE(path.stat().st_mode)
         if mode & 0o077:
             raise ConfigError(
