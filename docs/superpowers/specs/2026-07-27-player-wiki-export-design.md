@@ -18,8 +18,11 @@
 **Date:** 2026-07-27
 **Status:** **render half implemented and shipped** (Plan A `ecdabe4`; wikilink
 rewriting `a10f3a8`, issue #17; markdown-link policy #23, issue #21). Transport
-(sequencing steps 6–8) is **not built** — `deploy_export` still refuses anything
-but `--render-only`. See "Sequencing" for what is done and what is not.
+(sequencing steps 6–8) as designed in this document was never built. See the
+supersession note above: `deploy_export` shipped a different transport in its
+place (DokuWiki's JSON-RPC API), so `--render-only` is no longer the only
+supported mode. See "Sequencing" for what this document's own plan completed
+and what it did not.
 
 ## Purpose
 

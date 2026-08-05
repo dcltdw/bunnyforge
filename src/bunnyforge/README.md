@@ -295,15 +295,35 @@ history like any other change.
 
 ### Drift
 
-A page changed on the wiki since the last deploy is **held back**, never
-silently overwritten: the plan reports it with a unified diff against the
-staged target, and its current wiki text is written to
+A staged page is **held back**, never silently overwritten, for any of three
+reasons:
+
+- **drift** — the page changed on the wiki since the last deploy: the wiki's
+  current text no longer matches the hash this tool recorded, and it also
+  differs from what would now be deployed.
+- **drift-manual-era** — this page has no baseline in the manifest at all,
+  yet the wiki's current text differs from what would be deployed. This is
+  what fires on the **first** deploy against a wiki that already has content
+  from the old manual-copy workflow, or against any page edited by hand
+  outside this tool: with no recorded baseline the tool cannot tell what
+  changed, so it refuses to guess and holds the page back rather than
+  overwriting a page it never wrote itself.
+- **deleted-on-wiki** — the page is still staged (its source file is still
+  exported), but a human deleted the wiki page since the last deploy.
+  Recreating it would clobber that deletion decision, so it is held back
+  instead. This is distinct from an **orphan** (below): an orphan is a
+  manifest entry that has dropped *out of* the staged set — the source file
+  was removed, or its visibility changed — whereas `deleted-on-wiki` is a
+  page still being staged whose *wiki* copy is the one that's gone.
+
+For `drift` and `drift-manual-era` the plan reports a unified diff against
+the staged target, and the wiki's current text is written to
 `<workspace>/.bunnyforge/wiki-drift/` for manual merge (recreated from empty
 on every planning run, so a page that stops drifting leaves no stale copy
-behind). Resolve a held-back page either by pulling the wiki edit into the
-workspace source — the next render then matches and the drift disappears —
-or by re-running with `--overwrite <page-id> --go` to clobber it and
-re-baseline.
+behind); `deleted-on-wiki` has no wiki text to diff or copy. The resolution
+is the same for all three: either pull the wiki edit into the workspace
+source — the next render then matches and the drift disappears — or re-run
+with `--overwrite <page-id> --go` to clobber it and re-baseline.
 
 ### Orphans
 

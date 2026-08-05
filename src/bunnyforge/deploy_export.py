@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-deploy_export.py — render Export/ into a DokuWiki staging tree.
+deploy_export.py — render Export/ and deploy it to the wiki over JSON-RPC.
 
 Direction: Export/ -> staging tree -> wiki. This script never writes to the
 workspace itself; the wiki is read to plan on every run except --render-only,

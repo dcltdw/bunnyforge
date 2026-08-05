@@ -8,8 +8,9 @@ Your campaign is a directory of Markdown files with front matter: NPCs,
 factions, places, sessions, mechanics. bunnyforge gives that directory a
 skeleton, reviews its integrity, generates names from culture inventories
 you define, and exports the player-visible slice to DokuWiki. Everything
-is a text file; everything works offline; the only state is your git
-history.
+is a text file; the only state is your git history. Every command works
+offline except the wiki deploy itself — and even that keeps a fully
+offline path via `deploy-export --render-only`.
 
 - **Python ≥ 3.11, zero runtime dependencies.**
 - **Agent-first doctrine.** `init` writes an `AGENTS.md` contract that
