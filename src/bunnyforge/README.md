@@ -436,6 +436,34 @@ any form, not even their filename appears". The run summary therefore lists
 every placeholder page ID it wrote; read that list before copying the staging
 tree onto the wiki.
 
+### Live wiki check
+
+`tests/live_wiki_check.py` is an opt-in, human-invoked script that exercises
+this transport against a **real** DokuWiki install — the same kind of
+confidence `tests/check_portability.py` gives a culture author, but for the
+deploy transport. It is not a `unittest` test: `unittest discover`'s default
+pattern is `test*.py`, so this file is never collected, and it **never runs
+in CI or the normal test suite** — every other test in this suite is
+offline by design, and that posture never changes.
+
+```sh
+PYTHONPATH=src python3 tests/live_wiki_check.py --workspace PATH            # read-only checks
+PYTHONPATH=src python3 tests/live_wiki_check.py --workspace PATH --go       # full battery, writes to the wiki
+```
+
+Without `--go` it runs three read-only checks (the auth handshake, the
+missing-page contract, and the protected-page guard) and writes nothing.
+With `--go` it also deploys, edits, drift-tests, `--overwrite`s, and
+resume-after-crash-tests a small probe page under `<ns>:live-wiki-check:` —
+using its own temporary workspace and manifest, never the real
+`<workspace>/.bunnyforge/wiki-manifest.json` — and probes two RPC edge
+cases (`core.savePage` refusing an empty page; the `~~NOTOC~~` placeholder
+body saving as non-empty). Every write check reuses the same handful of
+stable page IDs, so running it repeatedly updates those same pages in place
+rather than piling up new ones. **This tool cannot delete wiki pages**, so
+neither can this script — it prints the page IDs it touched at the end, and
+removing them, if ever wanted, is a manual act on the wiki itself.
+
 ## review.py
 
 Runs a named suite of workspace checks on demand.
