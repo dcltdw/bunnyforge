@@ -15,10 +15,10 @@ every historical revision in data/attic/ as `page.<unixtime>.txt.gz`. That gives
 exact session-boundary snapshots for free.
 
 Usage:
-    python3 -m bunnyforge.import_perceptions --wiki-data /path/to/dokuwiki/data
+    python3 -m bunnyforge.import_perceptions --wiki-data /path/to/dokuwiki/data  # dry run — default
+    python3 -m bunnyforge.import_perceptions --wiki-data ... --go
     python3 -m bunnyforge.import_perceptions --wiki-data ... --namespace party
     python3 -m bunnyforge.import_perceptions --wiki-data ... --as-of 2026-03-14
-    python3 -m bunnyforge.import_perceptions --wiki-data ... --dry-run
     python3 -m bunnyforge.import_perceptions --wiki-data ... --workspace /path/to/campaign
 """
 
@@ -192,7 +192,8 @@ def build_file(page_id: str, raw: str, mtime: int, as_of_label: str | None) -> s
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bunnyforge import-perceptions",
-        description="Export player-authored DokuWiki pages into Perceptions/ (one-way).",
+        description="Export player-authored DokuWiki pages into Perceptions/ (one-way). "
+                    "The default is a dry run; pass --go to write.",
     )
     parser.add_argument(
         "--wiki-data",
@@ -213,7 +214,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Replace existing files in Perceptions/ (default: skip existing)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be written")
+    parser.add_argument(
+        "--go", action="store_true",
+        help="Write the files. Without it this is a dry run that only "
+             "reports what would be written (the package-wide convention).")
     parser.add_argument(
         "--workspace", metavar="PATH",
         help="Campaign workspace root (default: $BUNNYFORGE_WORKSPACE, else "
@@ -262,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No pages found in namespace '{args.namespace}'.")
         return 0
 
-    if not args.dry_run:
+    if args.go:
         perceptions_dir.mkdir(parents=True, exist_ok=True)
 
     written = skipped = missing = blank = 0
@@ -294,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         content = build_file(page_id, raw, mtime, args.as_of)
-        if args.dry_run:
+        if not args.go:
             print(f"  [dry-run] would write     {dest.name}  ({len(content)} bytes)")
         else:
             dest.write_text(content, encoding="utf-8")
@@ -305,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
           f"{missing} unavailable.")
     if skipped and not args.overwrite:
         print("Use --overwrite to refresh existing captures.")
+    if not args.go and written:
+        print("Dry run: re-run with --go to write.")
     return 0
 
 
