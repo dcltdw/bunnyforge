@@ -352,8 +352,12 @@ class TestNewCliSurface(unittest.TestCase):
         return run_main(argv)
 
     def test_render_only_and_go_mutually_exclusive(self):
+        # Through self._run, not a bare main() call: redirect_stdout/stderr
+        # stay in effect across the SystemExit argparse raises, so argparse's
+        # usage banner and error line land in the captured buffers instead of
+        # the real stderr — test output must stay pristine.
         with self.assertRaises(SystemExit) as ctx:
-            deploy_export.main(["--render-only", "--go", "--staging", "/tmp/x"])
+            self._run(["--render-only", "--go", "--staging", "/tmp/x"])
         self.assertEqual(ctx.exception.code, 2)
 
     def test_render_only_still_requires_staging(self):
@@ -369,8 +373,15 @@ class TestNewCliSurface(unittest.TestCase):
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
             make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
-            os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
-            rc, _out, err = self._run(["--workspace", str(d)])
+            # Wrapped in patch.dict so the pop below is undone on exit
+            # regardless of ambient state or test outcome — a bare pop with
+            # no restore would permanently delete a pre-existing
+            # BUNNYFORGE_WIKI_TOKEN from the test process for every test that
+            # runs after this one (see test_config.py's
+            # test_group_readable_file_refused_with_chmod_instruction).
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+                rc, _out, err = self._run(["--workspace", str(d)])
             self.assertEqual(rc, 1)
             self.assertIn("BUNNYFORGE_WIKI_TOKEN", err)
 
