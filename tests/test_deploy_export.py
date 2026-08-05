@@ -922,6 +922,16 @@ class TestWriteOrder(unittest.TestCase):
         ids = [f"{NS}:export:npcs:solo"]
         self.assertEqual(deploy_export.write_order(ids, NS), ids)
 
+    def test_duplicate_input_ids_yield_each_page_once(self):
+        # present = set(ids) dedupes for membership, but a loop driven off
+        # the raw (un-deduped) list would re-trigger "mate present -> emit
+        # mate + self" once per repeat. write_order's whole purpose is an
+        # exactly-once, content-before-wrapper order, so a duplicated input
+        # must not duplicate the output.
+        ids = [f"{NS}:npcs:ana", f"{NS}:npcs:ana", f"{NS}:export:npcs:ana"]
+        order = deploy_export.write_order(ids, NS)
+        self.assertEqual(order, [f"{NS}:export:npcs:ana", f"{NS}:npcs:ana"])
+
 
 if __name__ == "__main__":
     unittest.main()

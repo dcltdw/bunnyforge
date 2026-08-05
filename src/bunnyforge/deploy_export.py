@@ -458,7 +458,11 @@ def write_order(page_ids, base: str) -> list[str]:
     """Sorted page order, except each content page lands immediately before
     its wrapper — so a wrapper never points at a not-yet-written include for
     longer than one call."""
-    ids = sorted(page_ids)
+    # Dedupe up front: `present` is a set regardless, but the loop below
+    # drives off `ids` — an un-deduped list would re-trigger "mate present ->
+    # emit mate + self" once per repeat, breaking the exactly-once guarantee
+    # this function exists to provide.
+    ids = sorted(set(page_ids))
     present = set(ids)
     export_prefix = f"{base}:export:"
 
