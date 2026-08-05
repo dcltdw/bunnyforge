@@ -1,7 +1,9 @@
 import contextlib
 import io
+import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from bunnyforge import _config
@@ -223,10 +225,24 @@ class TestMainIntegration(unittest.TestCase):
     def _run(self, argv):
         return run_main(argv)
 
-    def test_missing_render_only_is_refused(self):
+    def test_default_run_without_wiki_config_is_instructional(self):
+        # Bare deploy-export is now a network dry run; with no [wiki] url it
+        # must say exactly what to add and where, and mention --render-only.
         with tempfile.TemporaryDirectory() as d:
-            rc, _out, err = self._run(["--staging", str(Path(d) / "stage")])
-            self.assertNotEqual(rc, 0)
+            # The brief's literal fixture pointed --workspace at `d` while
+            # only ever writing campaign.toml under d/Export -- resolving the
+            # workspace itself would fail before the wiki-url check this test
+            # exists to exercise. Give `d` its own campaign.toml (no [wiki]
+            # table) so resolve_workspace succeeds and the run reaches that
+            # check.
+            (Path(d) / "campaign.toml").write_text(
+                _MINIMAL_CAMPAIGN_TOML, encoding="utf-8")
+            export = make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            rc, _out, err = self._run(
+                ["--workspace", str(d), "--export-dir", str(export)])
+            self.assertEqual(rc, 1)
+            self.assertIn("[wiki]", err)
+            self.assertIn('url = "https://<wiki>"', err)
             self.assertIn("--render-only", err)
 
     def test_missing_export_dir_is_refused(self):
@@ -329,6 +345,94 @@ class TestMainIntegration(unittest.TestCase):
                 "--export-dir", str(d / "Export"),
             ])
             self.assertEqual(rc, 0)
+
+
+class TestNewCliSurface(unittest.TestCase):
+    def _run(self, argv):
+        return run_main(argv)
+
+    def test_render_only_and_go_mutually_exclusive(self):
+        with self.assertRaises(SystemExit) as ctx:
+            deploy_export.main(["--render-only", "--go", "--staging", "/tmp/x"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_render_only_still_requires_staging(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            rc, _out, err = self._run(["--workspace", str(d), "--render-only"])
+            self.assertEqual(rc, 1)
+            self.assertIn("--staging", err)
+
+    def test_missing_token_is_instructional(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
+            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            os.environ.pop("BUNNYFORGE_WIKI_TOKEN", None)
+            rc, _out, err = self._run(["--workspace", str(d)])
+            self.assertEqual(rc, 1)
+            self.assertIn("BUNNYFORGE_WIKI_TOKEN", err)
+
+    def test_http_url_refused_before_any_network(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "http://wiki.invalid"\n', encoding="utf-8")
+            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}):
+                rc, _out, err = self._run(["--workspace", str(d)])
+            self.assertEqual(rc, 1)
+            self.assertIn("http://", err)
+
+    def test_omitted_staging_renders_for_real_into_a_temp_dir_that_is_cleaned_up(self):
+        # No test may touch the network, so this drives a run that must
+        # render for real (proving the temp dir actually works as a staging
+        # target, not just that one gets created) while still never reaching
+        # run_deploy: an unresolved link fatally refuses the run from inside
+        # main() *after* render_tree has already written pages into the temp
+        # staging dir, but before any RPC call would be made.
+        real_temp_dir_cls = deploy_export.tempfile.TemporaryDirectory
+        captured = {}
+
+        class RecordingTempDir(real_temp_dir_cls):
+            def __enter__(self):
+                path = super().__enter__()
+                captured["path"] = path
+                return path
+
+            def __exit__(self, *exc_info):
+                # Snapshot what landed on disk immediately before cleanup —
+                # captured["path"] no longer exists once super().__exit__
+                # returns.
+                root = Path(captured["path"])
+                captured["files"] = sorted(
+                    p.relative_to(root).as_posix() for p in root.rglob("*.txt"))
+                return super().__exit__(*exc_info)
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "campaign.toml").write_text(
+                '[campaign]\nnamespace = "test"\n'
+                '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
+            make_export(Path(d) / "Export", {
+                "Mechanics/open.md": "# Open\n\nSee [[totally-nonexistent]].\n",
+            })
+            with unittest.mock.patch.dict(
+                    os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
+                unittest.mock.patch.object(
+                    deploy_export.tempfile, "TemporaryDirectory",
+                    RecordingTempDir):
+                rc, _out, err = self._run(["--workspace", str(d)])
+            self.assertEqual(rc, 1)
+            self.assertIn("unresolved", err)
+            # The content page was actually rendered into the temp dir before
+            # the fatal-link check refused the run.
+            self.assertTrue(
+                any(f.endswith("mechanics/open.txt")
+                    for f in captured["files"]),
+                captured["files"])
+            self.assertFalse(Path(captured["path"]).exists())
 
 
 class TestLinkPolicy(unittest.TestCase):

@@ -2,8 +2,9 @@
 """
 deploy_export.py — render Export/ into a DokuWiki staging tree.
 
-Direction: Export/ -> staging tree. This script never writes to the workspace
-and never reads the wiki.
+Direction: Export/ -> staging tree -> wiki. This script never writes to the
+workspace itself; the wiki is read to plan on every run except --render-only,
+and written only with --go.
 
 Each exported Markdown file produces two staged pages:
 
@@ -16,22 +17,38 @@ The player half, <ns>:players:<dir>:<stem>, is never written here — it
 belongs to the players, and the wrapper's include renders a create-link while
 it does not exist.
 
-This is the render half of the pipeline. Transport, the content manifest, and
-drift detection arrive in a later change; --render-only is currently the only
-supported mode.
+This is the render half of the pipeline, feeding the transport half below it
+(manifest, drift detection, plan/apply) that main() drives. Three invocations:
+
+    bunnyforge deploy-export
+        Dry run (the default): render, fetch the wiki's current state, print
+        the full plan. Reads the network, writes nothing to the wiki.
+
+    bunnyforge deploy-export --go
+        Same plan, then perform the writes it calls for and update the
+        manifest.
+
+    bunnyforge deploy-export --render-only --staging PATH
+        Render only, offline: no [wiki] config and no token needed. PATH is
+        the deliverable, so it is required (dry run and --go accept it too,
+        optionally; a temp directory is used and removed otherwise).
 
 Usage:
+    python3 -m bunnyforge.deploy_export
+    python3 -m bunnyforge.deploy_export --go
     python3 -m bunnyforge.deploy_export --render-only --staging /tmp/stage
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import difflib
 import hashlib
 import json
 import shutil
 import sys
+import tempfile
 from collections import namedtuple
 from pathlib import Path
 
@@ -50,8 +67,9 @@ from bunnyforge._common import (
     markdown_links_to_wikilinks,
     target_index,
 )
-from bunnyforge._config import ConfigError, Workspace, resolve_workspace
-from bunnyforge._dokuwiki_rpc import RpcError, translate_error
+from bunnyforge._config import (
+    ConfigError, Workspace, resolve_workspace, resolve_wiki_token)
+from bunnyforge._dokuwiki_rpc import RpcClient, RpcError, translate_error
 from bunnyforge._workspace import WorkspaceError
 
 # Hand-written on the wiki and owned by nobody in this repo. Never wrapped,
@@ -223,11 +241,29 @@ def render_tree(export_dir: Path, staging: Path, base: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bunnyforge deploy-export",
-        description="Render Export/ into a DokuWiki staging tree.")
-    parser.add_argument("--render-only", action="store_true",
-                        help="Render to --staging and stop (currently required)")
-    parser.add_argument("--staging", required=True,
-                        help="Directory to write the staged page tree into")
+        description="Render Export/ and deploy it to the wiki over "
+                    "JSON-RPC. The default run is a dry run: it renders, "
+                    "fetches the wiki's current state, and prints the full "
+                    "plan, writing nothing to the wiki.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--go", action="store_true",
+                      help="Perform the writes the plan calls for, and "
+                           "update the manifest")
+    mode.add_argument("--render-only", action="store_true",
+                      help="Render to --staging and stop; no network, no "
+                           "[wiki] config, no token needed")
+    parser.add_argument("--staging", default=None,
+                        help="Directory for the staged page tree. Optional "
+                             "in the default and --go modes (a temp "
+                             "directory is used and removed at exit "
+                             "otherwise, so a stale tree can never be "
+                             "pushed); required with --render-only, where "
+                             "the tree is the deliverable")
+    parser.add_argument("--overwrite", action="append", default=[],
+                        metavar="PAGE_ID",
+                        help="Write this drifted/held-back page anyway and "
+                             "re-baseline it (repeatable; takes effect with "
+                             "--go)")
     parser.add_argument("--export-dir", default=None,
                         help="Source directory (default: the resolved "
                              "workspace's Export/, so it follows --workspace)")
@@ -245,9 +281,9 @@ def main(argv: list[str] | None = None) -> int:
              "the nearest campaign.toml above the current directory)")
     args = parser.parse_args(argv)
 
-    if not args.render_only:
-        print("error: only --render-only is implemented; transport lands in a "
-              "later change", file=sys.stderr)
+    if args.render_only and not args.staging:
+        print("error: --render-only needs --staging PATH — the staged tree "
+              "is the deliverable of a render-only run", file=sys.stderr)
         return 1
 
     try:
@@ -268,62 +304,98 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
-    staging = Path(args.staging).expanduser().resolve()
-    if staging.exists():
-        if not staging.is_dir():
-            print(f"error: --staging {staging} exists and is not a directory",
+    # Network needs are gated up front, before any rendering, so a config
+    # problem is reported in one second, not after a full render.
+    client = None
+    if not args.render_only:
+        wiki_url = ws.config.wiki_url
+        if not wiki_url:
+            print("error: campaign.toml has no [wiki] url — deploying needs "
+                  "to know where the wiki is. Add:\n\n"
+                  "  [wiki]\n"
+                  '  url = "https://<wiki>"\n\n'
+                  "(--render-only needs no [wiki] and no token.)",
                   file=sys.stderr)
             return 1
-        if any(staging.iterdir()):
-            print(
-                f"error: --staging {staging} already exists and is not empty. "
-                "Rendering into it could leave a retired page on disk from a "
-                "prior run while this run still reports success — remove the "
-                "directory or pick a fresh one and re-run.",
-                file=sys.stderr)
+        try:
+            token = resolve_wiki_token(ws.root)
+            client = RpcClient(wiki_url, token)
+        except (ConfigError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    rels = sorted(p.relative_to(export_dir).as_posix()
-                  for p in export_dir.rglob("*.md"))
-    # render_tree writes any placeholder pages itself (it holds `staging`);
-    # build_link_resolver only ever sees the workspace, so it cannot write.
-    resolver = build_link_resolver(
-        ws, rels, base, args.create_empty_placeholders)
-    result, log = render_tree(export_dir, staging, base, link_resolver=resolver)
+    # When --staging is omitted the tree goes to a temp directory removed at
+    # exit — a deploy always uploads what it just rendered, so a stale tree
+    # can never be pushed.
+    with contextlib.ExitStack() as stack:
+        if args.staging:
+            staging = Path(args.staging).expanduser().resolve()
+            if staging.exists():
+                if not staging.is_dir():
+                    print(f"error: --staging {staging} exists and is not a directory",
+                          file=sys.stderr)
+                    return 1
+                if any(staging.iterdir()):
+                    print(
+                        f"error: --staging {staging} already exists and is not empty. "
+                        "Rendering into it could leave a retired page on disk from a "
+                        "prior run while this run still reports success — remove the "
+                        "directory or pick a fresh one and re-run.",
+                        file=sys.stderr)
+                    return 1
+        else:
+            staging = Path(stack.enter_context(tempfile.TemporaryDirectory()))
 
-    fatal = [i for i in result.link_issues
-             if i.case in ("unresolved", "ambiguous")
-             or (i.case == "unexported" and not args.create_empty_placeholders)]
+        rels = sorted(p.relative_to(export_dir).as_posix()
+                      for p in export_dir.rglob("*.md"))
+        # render_tree writes any placeholder pages itself (it holds `staging`);
+        # build_link_resolver only ever sees the workspace, so it cannot write.
+        resolver = build_link_resolver(
+            ws, rels, base, args.create_empty_placeholders)
+        result, log = render_tree(export_dir, staging, base, link_resolver=resolver)
 
-    for line in log:
-        print(line, file=sys.stderr if "REFUSED" in line else sys.stdout)
+        fatal = [i for i in result.link_issues
+                 if i.case in ("unresolved", "ambiguous")
+                 or (i.case == "unexported" and not args.create_empty_placeholders)]
 
-    if result.collisions:
-        print(f"\nRefused: {len(result.collisions)} reserved-namespace "
-              f"collision(s).", file=sys.stderr)
-        return 1
+        for line in log:
+            print(line, file=sys.stderr if "REFUSED" in line else sys.stdout)
 
-    if fatal:
-        print(f"\n{len(fatal)} link(s) refused. Fix the source text, or pass "
-              "--create-empty-placeholders for links to real but unexported "
-              "files (typos and ambiguous targets are never placeholdered).",
-              file=sys.stderr)
-        return 1
+        if result.collisions:
+            print(f"\nRefused: {len(result.collisions)} reserved-namespace "
+                  f"collision(s).", file=sys.stderr)
+            return 1
 
-    print(f"\n{result.pages} page(s), {result.wrappers} wrapper(s), "
-          f"{result.skipped} skipped, "
-          f"{len(result.placeholder_ids)} placeholder(s).")
+        if fatal:
+            print(f"\n{len(fatal)} link(s) refused. Fix the source text, or pass "
+                  "--create-empty-placeholders for links to real but unexported "
+                  "files (typos and ambiguous targets are never placeholdered).",
+                  file=sys.stderr)
+            return 1
 
-    if result.placeholder_ids:
-        # A placeholder page is empty, but its ID is not: it spells out the
-        # unexported file's path, which for a gm-only doc means publishing
-        # that filename to the player wiki's index and search. Name them all,
-        # so the operator sees exactly what is about to become visible.
-        print("\nPlaceholder page IDs — these names become visible in the "
-              "player wiki's index and search:")
-        for pid in sorted(result.placeholder_ids):
-            print(f"  {pid}")
-    return 0
+        print(f"\n{result.pages} page(s), {result.wrappers} wrapper(s), "
+              f"{result.skipped} skipped, "
+              f"{len(result.placeholder_ids)} placeholder(s).")
+
+        if result.placeholder_ids:
+            # A placeholder page is empty, but its ID is not: it spells out the
+            # unexported file's path, which for a gm-only doc means publishing
+            # that filename to the player wiki's index and search. Name them all,
+            # so the operator sees exactly what is about to become visible.
+            print("\nPlaceholder page IDs — these names become visible in the "
+                  "player wiki's index and search:")
+            for pid in sorted(result.placeholder_ids):
+                print(f"  {pid}")
+
+        if args.render_only:
+            return 0
+
+        try:
+            return run_deploy(ws, staging, client, args.go,
+                              set(args.overwrite), ws.config.wiki_url)
+        except DeployError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
 
 # ---------------------------------------------------------------------------
