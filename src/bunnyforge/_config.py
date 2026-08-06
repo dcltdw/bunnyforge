@@ -36,12 +36,16 @@ Config = namedtuple(
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
     "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url "
-    "wiki_install_root accepted",
+    "wiki_install_root accepted snapshot_max_age_days fetch_command",
     # wiki_url and wiki_install_root: [wiki] is entirely optional, so a
     # workspace using neither RPC nor the `wiki` review suite leaves both
     # None. accepted: [[review.accepted]] is likewise optional, so a
     # workspace with no recorded acceptances gets an empty tuple.
-    defaults=[None, None, ()])
+    # snapshot_max_age_days: the wiki-snapshot review check's staleness
+    # threshold, in days; 30 unless overridden. fetch_command: the shell
+    # command `review --fetch-latest` runs to refresh the snapshot before
+    # reviewing; None means the flag is refused (see review.py).
+    defaults=[None, None, (), 30, None])
 
 # An accepted review finding, recorded in campaign.toml as
 # [[review.accepted]]. See review.py's apply_acceptances for how these are
@@ -272,6 +276,21 @@ def load(workspace: Path) -> Config:
     wiki_install_root = wiki.get("install_root")
     if wiki_install_root is not None and not isinstance(wiki_install_root, str):
         raise ConfigError(f"{path}: wiki.install_root must be a string")
+    fetch_command = wiki.get("fetch_command")
+    if fetch_command is not None and not isinstance(fetch_command, str):
+        raise ConfigError(f"{path}: wiki.fetch_command must be a string")
+    snapshot_max_age_days = wiki.get("snapshot_max_age_days", 30)
+    # bool is an int subclass in Python, so isinstance(True, int) is True;
+    # excluded explicitly or `snapshot_max_age_days = true` would silently
+    # parse as 1.
+    if isinstance(snapshot_max_age_days, bool) or \
+            not isinstance(snapshot_max_age_days, int):
+        raise ConfigError(
+            f"{path}: wiki.snapshot_max_age_days must be an integer")
+    if snapshot_max_age_days <= 0:
+        raise ConfigError(
+            f"{path}: wiki.snapshot_max_age_days must be a positive "
+            f"integer, got {snapshot_max_age_days}")
 
     review_section = raw.get("review", {})
     if not isinstance(review_section, dict):
@@ -311,6 +330,8 @@ def load(workspace: Path) -> Config:
         wiki_url=wiki_url,
         wiki_install_root=wiki_install_root,
         accepted=accepted,
+        snapshot_max_age_days=snapshot_max_age_days,
+        fetch_command=fetch_command,
     )
 
 

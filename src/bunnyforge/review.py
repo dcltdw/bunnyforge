@@ -21,8 +21,10 @@ from __future__ import annotations
 import argparse
 import html
 import re
+import shlex
 import sys
 from collections import namedtuple
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Imported as a module as well as by name: tests reach through
@@ -426,6 +428,63 @@ def check_wiki_remote(files: list[FileRec], wiki_root: Path) -> list[Finding]:
     return out
 
 
+# The marker a campaign-side fetch script writes at the snapshot root: an
+# ISO-8601 UTC timestamp (e.g. "2026-08-06T00:21:01Z") recording when the
+# snapshot itself was pulled. Nothing else in a snapshot can answer that
+# question: `rsync -a` preserves the remote's mtimes, so every timestamp
+# *inside* the copy — files and directories alike — describes the wiki's
+# history, not the copy's (verified on a real snapshot: conf/local.php reads
+# the same mtime locally and remotely).
+_SNAPSHOT_MARKER = ".bunnyforge-snapshot-fetched-at"
+
+_DEFAULT_SNAPSHOT_MAX_AGE_DAYS = 30
+
+
+def check_wiki_snapshot(files: list[FileRec], wiki_root: Path,
+                        max_age_days: int = _DEFAULT_SNAPSHOT_MAX_AGE_DAYS
+                        ) -> list[Finding]:
+    """Warn when the local wiki snapshot's age is unknown or stale.
+
+    A stale copy checks last month's configuration and reports nothing
+    wrong — the most dangerous kind of pass, indistinguishable from a
+    genuinely clean run. Every finding here is `warn`, never `error`: the
+    point is to stop that silent pass, not to redden a run over something
+    that may be entirely legitimate (a copy obtained by hand, a mount, an
+    unpacked backup) or merely a few days past a conservative default.
+    """
+    marker = wiki_root / _SNAPSHOT_MARKER
+    if not marker.is_file():
+        return [Finding(
+            "warn", "wiki-snapshot", _SNAPSHOT_MARKER,
+            f"snapshot age unknown (no {_SNAPSHOT_MARKER}) — if this copy is "
+            f"old, these findings describe an old configuration")]
+
+    raw = marker.read_text(encoding="utf-8").strip()
+    try:
+        fetched_at = datetime.fromisoformat(raw)
+    except ValueError:
+        return [Finding(
+            "warn", "wiki-snapshot", _SNAPSHOT_MARKER,
+            f"{_SNAPSHOT_MARKER} is malformed ({raw!r}) — expected an "
+            f"ISO-8601 UTC timestamp like 2026-08-06T00:21:01Z")]
+    if fetched_at.tzinfo is None:
+        # A naive timestamp can't be compared against datetime.now(utc); the
+        # marker is documented as UTC, so treat a missing offset as that
+        # rather than refusing outright.
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+
+    age = datetime.now(timezone.utc) - fetched_at
+    if age > timedelta(days=max_age_days):
+        age_days = age.total_seconds() / 86400
+        return [Finding(
+            "warn", "wiki-snapshot", _SNAPSHOT_MARKER,
+            f"snapshot is {age_days:.1f} day(s) old (threshold: "
+            f"{max_age_days} day(s)) — these findings may describe an old "
+            f"configuration; refresh the copy, e.g. with "
+            f"--fetch-latest")]
+    return []
+
+
 CHECKS = {
     "visibility-audit": check_visibility_audit,
     "front-matter": check_front_matter,
@@ -436,6 +495,7 @@ CHECKS = {
     "wiki-acl": check_wiki_acl,
     "wiki-plugins": check_wiki_plugins,
     "wiki-remote": check_wiki_remote,
+    "wiki-snapshot": check_wiki_snapshot,
 }
 
 SUITES = {
@@ -444,7 +504,8 @@ SUITES = {
     # Deliberately not part of checkup: it needs a live install, which CI does
     # not have. Keeping it a separate suite is the whole skippability
     # mechanism — checkup never reaches off the local machine.
-    "wiki": ["wiki-conf", "wiki-acl", "wiki-plugins", "wiki-remote"],
+    "wiki": ["wiki-conf", "wiki-acl", "wiki-plugins", "wiki-remote",
+             "wiki-snapshot"],
 }
 
 # Checks that need the full Workspace (its config), rather than just the
@@ -453,7 +514,8 @@ SUITES = {
 _NEEDS_WORKSPACE = frozenset({"wikilinks", "compendium"})
 # Checks taking a DokuWiki install root instead of anything from the
 # workspace — a third argument shape, alongside Workspace and workspace root.
-_NEEDS_WIKI = frozenset({"wiki-conf", "wiki-acl", "wiki-plugins", "wiki-remote"})
+_NEEDS_WIKI = frozenset({"wiki-conf", "wiki-acl", "wiki-plugins",
+                         "wiki-remote", "wiki-snapshot"})
 
 
 def run_suite(suite: str, ws: Workspace,
@@ -470,7 +532,15 @@ def run_suite(suite: str, ws: Workspace,
             arg = ws
         else:
             arg = ws.root
-        findings.extend(CHECKS[name](files, arg))
+        # wiki-snapshot is the one _NEEDS_WIKI check that also needs a value
+        # from campaign.toml (the staleness threshold), which the other
+        # wiki_root-only checks have no use for — special-cased here rather
+        # than widening every wiki check's signature for one check's sake.
+        if name == "wiki-snapshot":
+            findings.extend(
+                CHECKS[name](files, arg, ws.config.snapshot_max_age_days))
+        else:
+            findings.extend(CHECKS[name](files, arg))
     return findings
 
 
@@ -579,7 +649,37 @@ def format_terminal(findings: list[Finding], suite: str,
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def run_fetch_command(command: str, cwd: Path, runner=None) -> int:
+    """Run the configured `[wiki] fetch_command`, print its stdout/stderr,
+    and return its exit status.
+
+    Split with shlex, run with shell=False: an operator needing pipes or
+    redirection can wrap them in a script, which is a better trade than
+    handing a config file a shell. `runner` defaults to subprocess.run;
+    tests inject a fake so nothing in this suite ever spawns a real process.
+
+    stdout/stderr are captured rather than inherited so they can be printed
+    deterministically — the whole argument for --fetch-latest is that the
+    fetch owns its own self-labelled error messages, so swallowing them
+    would defeat the point.
+    """
+    if runner is None:
+        import subprocess
+        runner = subprocess.run
+    argv = shlex.split(command)
+    result = runner(argv, cwd=cwd, capture_output=True, text=True)
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+        if not result.stdout.endswith("\n"):
+            sys.stdout.write("\n")
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+        if not result.stderr.endswith("\n"):
+            sys.stderr.write("\n")
+    return result.returncode
+
+
+def main(argv: list[str] | None = None, *, fetch_runner=None) -> int:
     parser = argparse.ArgumentParser(
         prog="bunnyforge review", description="Run a named workspace review suite.")
     parser.add_argument("suite", nargs="?", default="checkup",
@@ -595,10 +695,22 @@ def main(argv: list[str] | None = None) -> int:
         help="DokuWiki installation root (the directory holding conf/ and "
              "lib/). Required by the 'wiki' suite (or set [wiki] "
              "install_root in campaign.toml); ignored by every other.")
+    parser.add_argument(
+        "--fetch-latest", action="store_true",
+        help="Run [wiki] fetch_command to refresh the local snapshot before "
+             "reviewing, and refuse to review if it fails. Only meaningful "
+             "for a suite that needs a wiki root (e.g. 'wiki').")
     args = parser.parse_args(argv)
 
     if args.suite not in SUITES:
         parser.error(f"unknown suite: {args.suite}. Known: {', '.join(SUITES)}")
+
+    suite_needs_wiki = any(name in _NEEDS_WIKI for name in SUITES[args.suite])
+    if args.fetch_latest and not suite_needs_wiki:
+        print(f"error: --fetch-latest only makes sense for a suite that "
+              f"needs a wiki root (e.g. 'wiki'); '{args.suite}' does not "
+              f"use one", file=sys.stderr)
+        return 1
 
     try:
         ws = resolve_workspace(args.workspace)
@@ -606,12 +718,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    if args.fetch_latest:
+        fetch_command = ws.config.fetch_command
+        if not fetch_command:
+            print(f"error: --fetch-latest needs [wiki] fetch_command set in "
+                  f"campaign.toml, e.g.:\n"
+                  f"  [wiki]\n"
+                  f'  fetch_command = "./scripts/fetch-wiki-snapshot.sh"',
+                  file=sys.stderr)
+            return 1
+        rc = run_fetch_command(fetch_command, ws.root, runner=fetch_runner)
+        if rc != 0:
+            print(f"error: --fetch-latest's fetch_command "
+                  f"({fetch_command!r}) exited {rc} — review refused; see "
+                  f"its output above for why the fetch itself failed",
+                  file=sys.stderr)
+            return 1
+
     # Required conditionally rather than globally: making a wiki root
     # mandatory would break checkup, which never touches a wiki. Resolved
     # after the workspace, not before, since the configured fallback lives
     # in that workspace's campaign.toml — --wiki-root still wins when given.
     wiki_root = None
-    if any(name in _NEEDS_WIKI for name in SUITES[args.suite]):
+    if suite_needs_wiki:
         configured = ws.config.wiki_install_root
         if args.wiki_root:
             wiki_root = Path(args.wiki_root).expanduser().resolve()
