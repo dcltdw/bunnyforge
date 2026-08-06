@@ -171,4 +171,11 @@ resolved on its own with no change.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+Releases up to and including **0.2.3** were published under the MIT licence and
+stay MIT forever; that grant cannot be withdrawn. The change applies from the
+next release onward.
+
+Contributions are accepted under the same licence as the project. If you are
+opening a pull request, that is the licence you are granting.
