@@ -36,11 +36,19 @@ Config = namedtuple(
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
     "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url "
-    "wiki_install_root",
-    # wiki_url and wiki_install_root only — [wiki] is entirely optional: the
-    # RPC transport needs a URL, the `wiki` review suite needs a local
-    # install root, and a workspace using neither leaves both None.
-    defaults=[None, None])
+    "wiki_install_root accepted",
+    # wiki_url and wiki_install_root: [wiki] is entirely optional, so a
+    # workspace using neither RPC nor the `wiki` review suite leaves both
+    # None. accepted: [[review.accepted]] is likewise optional, so a
+    # workspace with no recorded acceptances gets an empty tuple.
+    defaults=[None, None, ()])
+
+# An accepted review finding, recorded in campaign.toml as
+# [[review.accepted]]. See review.py's apply_acceptances for how these are
+# matched against a run's findings, and its README section for the mechanism
+# this exists to support: accepting one specific finding, never disabling a
+# check wholesale.
+Acceptance = namedtuple("Acceptance", "check file match reason")
 
 
 class ConfigError(Exception):
@@ -146,6 +154,69 @@ def _type_dirs(section: dict) -> dict[str, str]:
     return dict(raw)
 
 
+_ACCEPTED_KEYS = ("check", "file", "match", "reason")
+
+
+def _accepted(review_section: dict, path: Path) -> tuple[Acceptance, ...]:
+    """Validate and parse review.accepted: an array of tables, each pinning
+    one specific finding as deliberately accepted.
+
+    All four keys are required on every entry — a loosely-keyed acceptance
+    (e.g. no `file`) could silently swallow findings from checks or files it
+    was never meant to cover. `reason` must also be non-empty: an acceptance
+    with no rationale is indistinguishable from a mistake six months later,
+    so this refuses at parse time rather than accepting silently.
+    """
+    raw = review_section.get("accepted", [])
+    if not isinstance(raw, list):
+        raise ConfigError(f"{path}: review.accepted must be an array of tables "
+                          "([[review.accepted]])")
+
+    out = []
+    for i, entry in enumerate(raw, start=1):
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"{path}: [[review.accepted]] entry {i} must be a table, e.g.\n"
+                '  [[review.accepted]]\n'
+                '  check  = "<check-name>"\n'
+                '  file   = "<path>"\n'
+                '  match  = "<substring of the finding message>"\n'
+                '  reason = "<why this is intentional>"')
+
+        missing = [k for k in _ACCEPTED_KEYS if k not in entry]
+        if missing:
+            given = ", ".join(f"{k}={entry[k]!r}" for k in _ACCEPTED_KEYS
+                              if k in entry)
+            identifies = f" ({given})" if given else ""
+            raise ConfigError(
+                f"{path}: [[review.accepted]] entry {i}{identifies} is "
+                f"missing required key(s): {', '.join(missing)} — check, "
+                "file, match, and reason are all required, e.g.\n"
+                '  [[review.accepted]]\n'
+                '  check  = "<check-name>"\n'
+                '  file   = "<path>"\n'
+                '  match  = "<substring of the finding message>"\n'
+                '  reason = "<why this is intentional>"')
+
+        for k in _ACCEPTED_KEYS:
+            if not isinstance(entry[k], str):
+                raise ConfigError(
+                    f"{path}: [[review.accepted]] entry {i}: {k} must be a "
+                    "string")
+
+        if not entry["reason"].strip():
+            raise ConfigError(
+                f"{path}: [[review.accepted]] entry {i} (check="
+                f"{entry['check']!r}, file={entry['file']!r}) has an empty "
+                "`reason` — write down why this finding is accepted; an "
+                "acceptance with no rationale is indistinguishable from a "
+                "mistake six months later")
+
+        out.append(Acceptance(check=entry["check"], file=entry["file"],
+                              match=entry["match"], reason=entry["reason"]))
+    return tuple(out)
+
+
 def load(workspace: Path) -> Config:
     """Read campaign.toml from `workspace`. Raises ConfigError on any problem.
 
@@ -202,6 +273,11 @@ def load(workspace: Path) -> Config:
     if wiki_install_root is not None and not isinstance(wiki_install_root, str):
         raise ConfigError(f"{path}: wiki.install_root must be a string")
 
+    review_section = raw.get("review", {})
+    if not isinstance(review_section, dict):
+        raise ConfigError(f"{path}: [review] must be a table")
+    accepted = _accepted(review_section, path)
+
     entity_dirs = _str_tuple(ws, "entity_dirs")
     inherit_dirs = _str_tuple(ws, "inherit_dirs")
     # iter_content_files walks entity_dirs and then inherit_dirs, so a
@@ -234,6 +310,7 @@ def load(workspace: Path) -> Config:
         type_dirs=_type_dirs(ws),
         wiki_url=wiki_url,
         wiki_install_root=wiki_install_root,
+        accepted=accepted,
     )
 
 

@@ -894,3 +894,218 @@ class TestWikiSuiteWiring(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertNotIn("~", err.getvalue())
             self.assertIn(expected, err.getvalue())
+
+
+class TestApplyAcceptances(unittest.TestCase):
+    """apply_acceptances: the mechanism that lets a workspace accept one
+    specific finding without disabling the check that produces it. See
+    issue #19 and _config.Acceptance."""
+
+    def _acc(self, check="front-matter", file="NPCs/broken.md",
+             match="missing `visibility`", reason="Intentional."):
+        return _config.Acceptance(check=check, file=file, match=match,
+                                  reason=reason)
+
+    def test_matched_finding_moves_to_accepted_not_remaining(self):
+        f = review.Finding("error", "front-matter", "NPCs/broken.md",
+                           "missing `visibility`")
+        remaining, accepted, stale = review.apply_acceptances(
+            [f], (self._acc(),), "checkup")
+        self.assertEqual(remaining, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(accepted[0].finding, f)
+        self.assertEqual(accepted[0].reason, "Intentional.")
+        self.assertEqual(accepted[0].match_count, 1)
+        self.assertEqual(stale, [])
+
+    def test_different_finding_from_same_check_is_not_accepted(self):
+        # The property that makes acceptance safe: a *new* finding from the
+        # same check, at a different file or with a different message, must
+        # still report.
+        accepted_f = review.Finding("error", "front-matter", "NPCs/broken.md",
+                                    "missing `visibility`")
+        other_f = review.Finding("error", "front-matter", "NPCs/other.md",
+                                 "missing `visibility`")
+        remaining, accepted, stale = review.apply_acceptances(
+            [accepted_f, other_f], (self._acc(),), "checkup")
+        self.assertEqual(remaining, [other_f])
+        self.assertEqual([e.finding for e in accepted], [accepted_f])
+
+    def test_message_substring_match_survives_reworded_message(self):
+        # match is a substring, not the whole message, so a message that
+        # grew more detail around the accepted substring still matches.
+        f = review.Finding("error", "wiki-acl", "conf/acl.auth.php",
+                           "<ns>:* grants to a group but sets no @ALL or "
+                           "@user rule of its own — accounts outside that "
+                           "group fall through to a broader rule")
+        acc = self._acc(check="wiki-acl", file="conf/acl.auth.php",
+                        match="<ns>:* grants to a group")
+        remaining, accepted, stale = review.apply_acceptances(
+            [f], (acc,), "wiki")
+        self.assertEqual(remaining, [])
+        self.assertEqual(len(accepted), 1)
+
+    def test_acceptance_matching_several_findings_reports_the_count(self):
+        f1 = review.Finding("error", "wiki-acl", "conf/acl.auth.php",
+                            "a:* grants to a group but sets no fallthrough")
+        f2 = review.Finding("error", "wiki-acl", "conf/acl.auth.php",
+                            "b:* grants to a group but sets no fallthrough")
+        acc = self._acc(check="wiki-acl", file="conf/acl.auth.php",
+                        match="grants to a group")
+        _remaining, accepted, _stale = review.apply_acceptances(
+            [f1, f2], (acc,), "wiki")
+        self.assertEqual(len(accepted), 2)
+        self.assertTrue(all(e.match_count == 2 for e in accepted))
+
+    def test_acceptance_matching_nothing_is_reported_stale(self):
+        acc = self._acc(check="front-matter", file="NPCs/gone.md",
+                        match="no longer produced")
+        remaining, accepted, stale = review.apply_acceptances(
+            [], (acc,), "checkup")
+        self.assertEqual(remaining, [])
+        self.assertEqual(accepted, [])
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0].severity, "warn")
+        self.assertEqual(stale[0].check, "review-accepted")
+        self.assertIn("front-matter", stale[0].message)
+
+    def test_stale_acceptance_does_not_redden_the_run(self):
+        # Stale findings are warn severity, and warnings never drive the
+        # exit code — a config change surfaces as a warning, not a failure.
+        acc = self._acc(match="no longer produced")
+        _remaining, _accepted, stale = review.apply_acceptances(
+            [], (acc,), "checkup")
+        self.assertTrue(stale)
+        self.assertFalse(any(f.severity == "error" for f in stale))
+
+    def test_acceptance_for_a_check_outside_this_suite_is_ignored(self):
+        # An acceptance recorded for wiki-acl must not be evaluated (and
+        # certainly not reported stale) while running `checkup`, which never
+        # runs wiki-acl at all. Otherwise every checkup run would spuriously
+        # warn about every wiki acceptance in the config.
+        acc = self._acc(check="wiki-acl", file="conf/acl.auth.php",
+                        match="grants to a group")
+        remaining, accepted, stale = review.apply_acceptances(
+            [], (acc,), "checkup")
+        self.assertEqual(remaining, [])
+        self.assertEqual(accepted, [])
+        self.assertEqual(stale, [])
+
+    def test_no_acceptances_is_a_no_op(self):
+        f = review.Finding("error", "front-matter", "NPCs/x.md", "missing `type`")
+        remaining, accepted, stale = review.apply_acceptances([f], (), "checkup")
+        self.assertEqual(remaining, [f])
+        self.assertEqual(accepted, [])
+        self.assertEqual(stale, [])
+
+
+class TestAcceptedFindingsInReports(unittest.TestCase):
+    def test_format_terminal_lists_accepted_section_with_reason(self):
+        f = review.Finding("error", "front-matter", "NPCs/broken.md",
+                           "missing `visibility`")
+        entry = review.AcceptedEntry(f, "Intentional: reviewed and fine.", 1)
+        text = review.format_terminal([], "checkup", [entry])
+        self.assertIn("Accepted", text)
+        self.assertIn("NPCs/broken.md", text)
+        self.assertIn("missing `visibility`", text)
+        self.assertIn("Intentional: reviewed and fine.", text)
+
+    def test_format_terminal_notes_an_over_broad_match(self):
+        f1 = review.Finding("error", "wiki-acl", "conf/acl.auth.php", "a:* grants")
+        f2 = review.Finding("error", "wiki-acl", "conf/acl.auth.php", "b:* grants")
+        entries = [review.AcceptedEntry(f1, "r", 2),
+                   review.AcceptedEntry(f2, "r", 2)]
+        text = review.format_terminal([], "wiki", entries)
+        self.assertIn("2", text)
+
+    def test_format_terminal_excludes_accepted_from_summary_counts(self):
+        f = review.Finding("error", "front-matter", "NPCs/broken.md",
+                           "missing `visibility`")
+        entry = review.AcceptedEntry(f, "Intentional.", 1)
+        # `findings` passed to format_terminal is what a caller already
+        # excluded the accepted finding from (apply_acceptances' `remaining`
+        # plus any stale warnings) — so a clean remainder must summarise 0
+        # errors even though one finding is shown in the Accepted section.
+        text = review.format_terminal([], "checkup", [entry])
+        self.assertIn("Summary: 0 error(s)", text)
+
+    def test_write_html_includes_accepted_section(self):
+        f = review.Finding("error", "front-matter", "NPCs/broken.md",
+                           "missing `visibility`")
+        entry = review.AcceptedEntry(f, "Intentional: reviewed and fine.", 1)
+        with tempfile.TemporaryDirectory() as d:
+            dest = review.write_html("checkup", [], Path(d), [entry])
+            html_text = dest.read_text(encoding="utf-8")
+            self.assertIn("NPCs/broken.md", html_text)
+            self.assertIn("Intentional: reviewed and fine.", html_text)
+
+
+class TestAcceptedFindingsEndToEnd(unittest.TestCase):
+    """main() wired end-to-end: campaign.toml's [[review.accepted]] actually
+    changes what a run reports and exits with."""
+
+    def test_accepted_finding_excluded_from_exit_code_but_still_visible(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "campaign.toml": (
+                    '[campaign]\nnamespace = "test"\n'
+                    '[[review.accepted]]\n'
+                    'check  = "front-matter"\n'
+                    'file   = "NPCs/broken.md"\n'
+                    'match  = "missing `visibility`"\n'
+                    'reason = "Intentional: reviewed and fine."\n'),
+                "NPCs/broken.md":
+                    "---\ntype: npc\ncanon: draft\nsummary: No vis.\n---\nx",
+            })
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["checkup", "--workspace", str(root)])
+            self.assertEqual(rc, 0, err.getvalue())
+            printed = out.getvalue()
+            self.assertIn("NPCs/broken.md", printed)
+            self.assertIn("Intentional: reviewed and fine.", printed)
+            self.assertIn("Accepted", printed)
+
+    def test_a_different_finding_from_the_same_check_still_fails_the_run(self):
+        # The safety property: accepting one finding must not silence a new
+        # one from the same check.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "campaign.toml": (
+                    '[campaign]\nnamespace = "test"\n'
+                    '[[review.accepted]]\n'
+                    'check  = "front-matter"\n'
+                    'file   = "NPCs/broken.md"\n'
+                    'match  = "missing `visibility`"\n'
+                    'reason = "Intentional: reviewed and fine."\n'),
+                "NPCs/broken.md":
+                    "---\ntype: npc\ncanon: draft\nsummary: No vis.\n---\nx",
+                "NPCs/other-broken.md":
+                    "---\ntype: npc\ncanon: draft\nsummary: Also no vis.\n---\nx",
+            })
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["checkup", "--workspace", str(root)])
+            self.assertEqual(rc, 1)
+            self.assertIn("NPCs/other-broken.md", out.getvalue())
+
+    def test_stale_acceptance_surfaces_but_exits_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "campaign.toml": (
+                    '[campaign]\nnamespace = "test"\n'
+                    '[[review.accepted]]\n'
+                    'check  = "front-matter"\n'
+                    'file   = "NPCs/gone.md"\n'
+                    'match  = "no longer produced"\n'
+                    'reason = "Was accepted; the file has since been fixed."\n'),
+                "NPCs/good.md":
+                    "---\ntype: npc\ncanon: draft\nvisibility: player-visible\n"
+                    "summary: Good.\n---\nx",
+            })
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["checkup", "--workspace", str(root)])
+            self.assertEqual(rc, 0, err.getvalue())
+            self.assertIn("review-accepted", out.getvalue())
+            self.assertIn("NPCs/gone.md", out.getvalue())

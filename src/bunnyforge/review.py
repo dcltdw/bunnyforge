@@ -42,10 +42,22 @@ from bunnyforge._common import (
 )
 from bunnyforge import _dokuwiki_install as dwi
 from bunnyforge._dokuwiki_install import InstallError
-from bunnyforge._config import ConfigError, Workspace, resolve_workspace
+from bunnyforge._config import Acceptance, ConfigError, Workspace, resolve_workspace
 from bunnyforge._workspace import WorkspaceError
 
 Finding = namedtuple("Finding", "severity check file message")
+
+# One accepted finding, ready for a report: the finding itself, the reason
+# recorded for it in campaign.toml, and how many findings this run the
+# accepting Acceptance matched in total (so an over-broad `match` — one
+# substring that turns out to cover several distinct findings — is visible
+# rather than silently swallowing more than the operator intended).
+AcceptedEntry = namedtuple("AcceptedEntry", "finding reason match_count")
+
+# The check name a stale acceptance (one that matched nothing this run) is
+# reported under. Not a real check — no CHECKS entry, no SUITES membership —
+# so it is never run, only ever surfaced as a synthetic warning.
+STALE_ACCEPTANCE_CHECK = "review-accepted"
 
 
 def _rel(path: Path, workspace: Path) -> str:
@@ -56,12 +68,19 @@ VALID_CANON = {"canon", "draft", "speculative", "perception"}
 VALID_VISIBILITY = {"gm-only", "player-visible", "mixed"}
 
 
-def write_html(suite: str, findings: list[Finding], workspace: Path) -> Path:
+def write_html(suite: str, findings: list[Finding], workspace: Path,
+              accepted: list[AcceptedEntry] = ()) -> Path:
     """Write Reviews/<suite>.html under `workspace` and return its path.
 
     Takes the root rather than a whole Workspace, matching the convention the
     checks below follow: each takes exactly what it needs, and this needs no
     config.
+
+    `findings` is what the caller has already excluded accepted findings
+    from (apply_acceptances' `remaining`, plus any stale-acceptance
+    warnings); `accepted` is listed in its own section below, each with the
+    reason recorded for it, so an accepted finding stays visible rather than
+    vanishing outright.
     """
     def esc(s: str) -> str:
         return html.escape(s)
@@ -79,6 +98,13 @@ def write_html(suite: str, findings: list[Finding], workspace: Path) -> Path:
         f"<tr><td>{esc(f.file)}</td><td>{esc(f.message)}</td></tr>"
         for f in sorted(audit, key=lambda x: x.file)
     ) or "<tr><td colspan='2'>No entity files.</td></tr>"
+
+    accepted_rows = "\n".join(
+        f"<tr><td>{esc(e.finding.check)}</td><td>{esc(e.finding.file)}</td>"
+        f"<td>{esc(e.finding.message)}</td><td>{esc(e.reason)}</td>"
+        f"<td>{e.match_count}</td></tr>"
+        for e in sorted(accepted, key=lambda e: (e.finding.check, e.finding.file))
+    ) or "<tr><td colspan='5'>No accepted findings.</td></tr>"
 
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -99,6 +125,10 @@ def write_html(suite: str, findings: list[Finding], workspace: Path) -> Path:
 <h2>Visibility audit</h2>
 <table><tr><th>file</th><th>audience</th></tr>
 {audit_rows}
+</table>
+<h2>Accepted</h2>
+<table><tr><th>check</th><th>file</th><th>message</th><th>reason</th><th>matches</th></tr>
+{accepted_rows}
 </table>
 </body></html>
 """
@@ -444,7 +474,63 @@ def run_suite(suite: str, ws: Workspace,
     return findings
 
 
-def format_terminal(findings: list[Finding], suite: str) -> str:
+def apply_acceptances(
+    findings: list[Finding], acceptances: tuple[Acceptance, ...], suite: str
+) -> tuple[list[Finding], list[AcceptedEntry], list[Finding]]:
+    """Partition `findings` against `acceptances`, honouring only the
+    acceptances that apply to `suite`.
+
+    A finding is accepted when `check` equals the finding's check, `file`
+    equals the finding's file, and `match` is a substring of the finding's
+    message (substring rather than an exact match: an improved message
+    wording must not silently un-accept a judgement). The first matching
+    acceptance wins for a given finding.
+
+    Only acceptances whose `check` actually runs as part of `suite` are
+    considered — an acceptance recorded for a check that belongs to a
+    different suite (e.g. a wiki-acl acceptance while running `checkup`)
+    is neither matched nor reported stale, since staleness only means
+    something for a check that ran this time.
+
+    Returns (remaining, accepted, stale):
+      - remaining: findings no acceptance matched — still reported, still
+        drive the exit code.
+      - accepted: one AcceptedEntry per matched finding, excluded from the
+        exit code and from per-check counts, but never dropped outright.
+      - stale: one warn-severity Finding (check STALE_ACCEPTANCE_CHECK) per
+        acceptance that matched nothing this run — the config may have
+        changed since the judgement was recorded. Warn severity so a stale
+        acceptance surfaces without reddening the run.
+    """
+    relevant = tuple(a for a in acceptances if a.check in SUITES.get(suite, []))
+    match_counts = {a: 0 for a in relevant}
+    pairs: list[tuple[Finding, Acceptance]] = []
+    remaining: list[Finding] = []
+
+    for f in findings:
+        hit = next((a for a in relevant
+                   if a.check == f.check and a.file == f.file and a.match in f.message),
+                  None)
+        if hit is None:
+            remaining.append(f)
+        else:
+            match_counts[hit] += 1
+            pairs.append((f, hit))
+
+    accepted = [AcceptedEntry(f, a.reason, match_counts[a]) for f, a in pairs]
+    stale = [
+        Finding("warn", STALE_ACCEPTANCE_CHECK, a.file,
+                f"accepted entry for check '{a.check}' matching {a.match!r} "
+                f"did not match any finding this run — the config may have "
+                f"changed since this was accepted (reason on file: "
+                f"{a.reason})")
+        for a in relevant if match_counts[a] == 0
+    ]
+    return remaining, accepted, stale
+
+
+def format_terminal(findings: list[Finding], suite: str,
+                    accepted: list[AcceptedEntry] = ()) -> str:
     lines: list[str] = []
 
     audit = [f for f in findings if f.check == "visibility-audit"]
@@ -462,11 +548,29 @@ def format_terminal(findings: list[Finding], suite: str) -> str:
 
     issues = [f for f in findings if f.check != "visibility-audit"]
     marks = {"error": "✗", "warn": "!", "info": "·"}
-    for name in [n for n in SUITES.get(suite, []) if n != "visibility-audit"]:
+    check_names = [n for n in SUITES.get(suite, []) if n != "visibility-audit"]
+    # STALE_ACCEPTANCE_CHECK is universal, not tied to any suite's own check
+    # list (see apply_acceptances), so it only earns a block when this run
+    # actually produced one — unlike the suite's own checks, which always
+    # print a "(0 finding(s))" header even when clean.
+    if STALE_ACCEPTANCE_CHECK not in check_names and \
+            any(f.check == STALE_ACCEPTANCE_CHECK for f in issues):
+        check_names.append(STALE_ACCEPTANCE_CHECK)
+    for name in check_names:
         block = [f for f in issues if f.check == name]
         lines.append(f"{name}  ({len(block)} finding(s))")
         for f in sorted(block, key=lambda x: (x.severity, x.file)):
             lines.append(f"  {marks.get(f.severity, '·')} {f.file}: {f.message}")
+        lines.append("")
+
+    if accepted:
+        lines.append(f"Accepted ({len(accepted)} finding(s))")
+        for entry in sorted(accepted, key=lambda e: (e.finding.check, e.finding.file)):
+            f = entry.finding
+            over_broad = (f"  [{entry.match_count} findings match this "
+                         f"acceptance]" if entry.match_count > 1 else "")
+            lines.append(f"  ✓ {f.check}  {f.file}: {f.message}{over_broad}")
+            lines.append(f"      reason: {entry.reason}")
         lines.append("")
 
     errs = sum(1 for f in findings if f.severity == "error")
@@ -525,13 +629,17 @@ def main(argv: list[str] | None = None) -> int:
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(format_terminal(findings, args.suite))
+
+    remaining, accepted, stale = apply_acceptances(
+        findings, ws.config.accepted, args.suite)
+    display = remaining + stale
+    print(format_terminal(display, args.suite, accepted))
 
     if args.html:
-        dest = write_html(args.suite, findings, ws.root)
+        dest = write_html(args.suite, display, ws.root, accepted)
         print(f"\nHTML report: {dest.relative_to(ws.root)}")
 
-    return 1 if any(f.severity == "error" for f in findings) else 0
+    return 1 if any(f.severity == "error" for f in display) else 0
 
 
 if __name__ == "__main__":

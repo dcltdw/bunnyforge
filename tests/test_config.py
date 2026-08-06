@@ -436,6 +436,94 @@ class TestWikiConfig(unittest.TestCase):
             self._load('wiki = "x"\n[campaign]\nnamespace = "test"\n')
 
 
+class TestAcceptedConfig(unittest.TestCase):
+    """[[review.accepted]] — accepting a specific finding, never a whole
+    check. See src/bunnyforge/review.py for how these are applied."""
+
+    def _load(self, toml_text):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "campaign.toml").write_text(toml_text, encoding="utf-8")
+            return _config.load(root)
+
+    def test_accepted_table_absent_is_empty_tuple(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n')
+        self.assertEqual(cfg.accepted, ())
+
+    def test_accepted_entry_parsed(self):
+        cfg = self._load(
+            '[campaign]\nnamespace = "test"\n'
+            '[[review.accepted]]\n'
+            'check  = "wiki-acl"\n'
+            'file   = "conf/acl.auth.php"\n'
+            'match  = "<ns>:* grants to a group"\n'
+            'reason = "Intentional: a small trusted set."\n')
+        self.assertEqual(len(cfg.accepted), 1)
+        entry = cfg.accepted[0]
+        self.assertEqual(entry.check, "wiki-acl")
+        self.assertEqual(entry.file, "conf/acl.auth.php")
+        self.assertEqual(entry.match, "<ns>:* grants to a group")
+        self.assertEqual(entry.reason, "Intentional: a small trusted set.")
+
+    def test_multiple_accepted_entries_parsed_in_order(self):
+        cfg = self._load(
+            '[campaign]\nnamespace = "test"\n'
+            '[[review.accepted]]\n'
+            'check = "a"\nfile = "f1"\nmatch = "m1"\nreason = "r1"\n'
+            '[[review.accepted]]\n'
+            'check = "b"\nfile = "f2"\nmatch = "m2"\nreason = "r2"\n')
+        self.assertEqual([a.check for a in cfg.accepted], ["a", "b"])
+
+    def test_missing_reason_refused_instructionally(self):
+        with self.assertRaises(_config.ConfigError) as ctx:
+            self._load(
+                '[campaign]\nnamespace = "test"\n'
+                '[[review.accepted]]\n'
+                'check = "wiki-acl"\nfile = "conf/acl.auth.php"\n'
+                'match = "grants to a group"\n')
+        msg = str(ctx.exception)
+        self.assertIn("reason", msg)
+        self.assertIn("wiki-acl", msg)  # names the offending entry
+
+    def test_empty_reason_refused_instructionally(self):
+        with self.assertRaises(_config.ConfigError) as ctx:
+            self._load(
+                '[campaign]\nnamespace = "test"\n'
+                '[[review.accepted]]\n'
+                'check = "wiki-acl"\nfile = "conf/acl.auth.php"\n'
+                'match = "grants to a group"\nreason = "   "\n')
+        msg = str(ctx.exception)
+        self.assertIn("reason", msg)
+
+    def test_missing_match_refused(self):
+        with self.assertRaises(_config.ConfigError) as ctx:
+            self._load(
+                '[campaign]\nnamespace = "test"\n'
+                '[[review.accepted]]\n'
+                'check = "wiki-acl"\nfile = "conf/acl.auth.php"\n'
+                'reason = "because"\n')
+        self.assertIn("match", str(ctx.exception))
+
+    def test_entry_must_be_a_table(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load(
+                '[campaign]\nnamespace = "test"\n'
+                '[review]\naccepted = ["not-a-table"]\n')
+
+    def test_accepted_non_list_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load(
+                '[campaign]\nnamespace = "test"\n'
+                '[review]\naccepted = "x"\n')
+
+    def test_review_non_table_refused(self):
+        # Same TOML-scoping trap noted for [wiki]/[names]: a bare key before
+        # any table header would otherwise be swallowed into a preceding
+        # table rather than staying a top-level `review` key.
+        with self.assertRaises(_config.ConfigError):
+            self._load('review = "x"\n[campaign]\nnamespace = "test"\n')
+
+
 class TestWikiToken(unittest.TestCase):
     def _token_file(self, root: Path, text, mode=0o600):
         path = root / ".bunnyforge" / "wiki-token"
