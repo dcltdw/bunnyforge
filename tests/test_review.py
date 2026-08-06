@@ -3,7 +3,9 @@ import io
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from bunnyforge import _common
@@ -894,6 +896,217 @@ class TestWikiSuiteWiring(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertNotIn("~", err.getvalue())
             self.assertIn(expected, err.getvalue())
+
+
+def _marker_ts(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class TestWikiSnapshotCheck(unittest.TestCase):
+    """check_wiki_snapshot: dates a local wiki copy that rsync -a otherwise
+    leaves undateable. See issue #23."""
+
+    def _write_marker(self, root: Path, text: str) -> None:
+        (root / review._SNAPSHOT_MARKER).write_text(text, encoding="utf-8")
+
+    def test_marker_absent_warns_honestly_not_accusingly(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d))
+            findings = review.check_wiki_snapshot([], root)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.severity, "warn")
+        self.assertEqual(f.check, "wiki-snapshot")
+        self.assertIn("unknown", f.message)
+        self.assertIn("old configuration", f.message)
+
+    def test_marker_fresh_no_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d))
+            self._write_marker(root, _marker_ts(datetime.now(timezone.utc)))
+            findings = review.check_wiki_snapshot([], root)
+        self.assertEqual(findings, [])
+
+    def test_marker_within_custom_threshold_no_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d))
+            ts = datetime.now(timezone.utc) - timedelta(days=10)
+            self._write_marker(root, _marker_ts(ts))
+            findings = review.check_wiki_snapshot([], root, max_age_days=30)
+        self.assertEqual(findings, [])
+
+    def test_marker_older_than_threshold_warns_naming_age_and_threshold(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d))
+            ts = datetime.now(timezone.utc) - timedelta(days=45)
+            self._write_marker(root, _marker_ts(ts))
+            findings = review.check_wiki_snapshot([], root, max_age_days=30)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.severity, "warn")
+        self.assertIn("45", f.message)
+        self.assertIn("30", f.message)
+
+    def test_marker_malformed_warns(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d))
+            self._write_marker(root, "not-a-timestamp")
+            findings = review.check_wiki_snapshot([], root)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.severity, "warn")
+        self.assertIn("malformed", f.message)
+
+    def test_none_of_the_four_states_ever_produce_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            absent = make_install(Path(d) / "absent")
+            fresh = make_install(Path(d) / "fresh")
+            self._write_marker(fresh, _marker_ts(datetime.now(timezone.utc)))
+            stale = make_install(Path(d) / "stale")
+            self._write_marker(
+                stale, _marker_ts(datetime.now(timezone.utc) - timedelta(days=90)))
+            malformed = make_install(Path(d) / "malformed")
+            self._write_marker(malformed, "nope")
+            for root in (absent, fresh, stale, malformed):
+                findings = review.check_wiki_snapshot([], root)
+                self.assertTrue(all(f.severity != "error" for f in findings),
+                               f"unexpected error from {root.name}: {findings}")
+
+    def test_stale_snapshot_does_not_flip_exit_code_by_itself(self):
+        # A stale marker must warn, never error -- proven end to end: an
+        # otherwise-clean wiki install with a 90-day-old marker still exits
+        # 0, and the finding is visible in the report.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_install(Path(d) / "wiki",
+                                local_php="$conf['useacl'] = 1;\n"
+                                          "$conf['useheading'] = 1;\n",
+                                plugins=("include",))
+            self._write_marker(
+                root, _marker_ts(datetime.now(timezone.utc) - timedelta(days=90)))
+            (Path(d) / "camp").mkdir()
+            ws = make_workspace(Path(d) / "camp", {})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws),
+                                  "--wiki-root", str(root)])
+            self.assertEqual(rc, 0)
+            self.assertIn("wiki-snapshot", out.getvalue())
+
+
+class TestWikiSnapshotWiring(unittest.TestCase):
+    def test_registered_in_checks(self):
+        self.assertIn("wiki-snapshot", review.CHECKS)
+
+    def test_in_wiki_suite(self):
+        self.assertIn("wiki-snapshot", review.SUITES["wiki"])
+
+    def test_in_needs_wiki(self):
+        self.assertIn("wiki-snapshot", review._NEEDS_WIKI)
+
+    def test_not_in_checkup(self):
+        self.assertNotIn("wiki-snapshot", review.SUITES["checkup"])
+
+
+class TestRunSuiteThreadsSnapshotThreshold(unittest.TestCase):
+    def test_configured_threshold_reaches_the_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            wiki_root = make_install(Path(d) / "wiki",
+                                     local_php="$conf['useacl'] = 1;\n"
+                                               "$conf['useheading'] = 1;\n",
+                                     plugins=("include",))
+            (wiki_root / review._SNAPSHOT_MARKER).write_text(
+                _marker_ts(datetime.now(timezone.utc) - timedelta(days=10)),
+                encoding="utf-8")
+            camp = make_workspace(Path(d) / "camp", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 '[wiki]\nsnapshot_max_age_days = 5\n'})
+            ws = _config.open_workspace(camp)
+            findings = review.run_suite("wiki", ws, wiki_root)
+        snap = [f for f in findings if f.check == "wiki-snapshot"]
+        self.assertEqual(len(snap), 1)
+        self.assertIn("5", snap[0].message)
+
+
+class TestFetchLatest(unittest.TestCase):
+    """--fetch-latest: runs a configured command before the suite and
+    refuses to review if it fails. See issue #23. No test here spawns a
+    real process -- run_fetch_command's `runner` is always a fake."""
+
+    def test_missing_fetch_command_refused_instructionally(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = make_workspace(Path(d), {})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws),
+                                  "--wiki-root", d, "--fetch-latest"])
+            self.assertEqual(rc, 1)
+            self.assertIn("fetch_command", err.getvalue())
+            self.assertIn("[wiki]", err.getvalue())
+
+    def test_fetch_latest_on_checkup_refused_instructionally(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = make_workspace(Path(d), {})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["checkup", "--workspace", str(ws),
+                                  "--fetch-latest"])
+            self.assertEqual(rc, 1)
+            self.assertIn("--fetch-latest", err.getvalue())
+            self.assertIn("checkup", err.getvalue())
+
+    def test_command_split_with_shlex_run_without_shell_from_workspace_root(self):
+        calls = []
+
+        def fake_runner(argv, cwd, **kwargs):
+            calls.append((argv, cwd, kwargs))
+            return SimpleNamespace(returncode=0, stdout="fetched ok\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as d:
+            wiki_root = make_install(Path(d) / "wiki",
+                                     local_php="$conf['useacl'] = 1;\n"
+                                               "$conf['useheading'] = 1;\n",
+                                     plugins=("include",))
+            ws = make_workspace(Path(d) / "camp", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 '[wiki]\n'
+                                 f'install_root = "{wiki_root}"\n'
+                                 'fetch_command = '
+                                 '"./scripts/fetch-wiki-snapshot.sh --go"\n'})
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws),
+                                  "--fetch-latest"], fetch_runner=fake_runner)
+            self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        argv, cwd, kwargs = calls[0]
+        self.assertEqual(argv, ["./scripts/fetch-wiki-snapshot.sh", "--go"])
+        self.assertEqual(Path(cwd).resolve(), Path(ws).resolve())
+        self.assertNotIn("shell", kwargs)
+        self.assertIn("fetched ok", out.getvalue())
+
+    def test_fetch_failure_refuses_review_exits_nonzero_and_surfaces_output(self):
+        def fake_runner(argv, cwd, **kwargs):
+            return SimpleNamespace(returncode=3, stdout="",
+                                   stderr="ssh: connection refused\n")
+
+        with tempfile.TemporaryDirectory() as d:
+            ws = make_workspace(Path(d) / "camp", {
+                "campaign.toml": '[campaign]\nnamespace = "test"\n'
+                                 '[wiki]\n'
+                                 'fetch_command = '
+                                 '"./scripts/fetch-wiki-snapshot.sh"\n'})
+            nonexistent_wiki = str(Path(d) / "does-not-exist")
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = review.main(["wiki", "--workspace", str(ws),
+                                  "--wiki-root", nonexistent_wiki,
+                                  "--fetch-latest"], fetch_runner=fake_runner)
+            self.assertEqual(rc, 1)
+        self.assertIn("ssh: connection refused", err.getvalue())
+        self.assertIn("fetch", err.getvalue().lower())
+        # The suite (and its wiki-root resolution) never ran: no trace of
+        # the bogus --wiki-root reaching an error message.
+        self.assertNotIn("does-not-exist", err.getvalue())
 
 
 class TestApplyAcceptances(unittest.TestCase):

@@ -639,3 +639,81 @@ disagreeing, which is worse than not checking; the alternative is shelling out
 to DokuWiki's `auth_aclcheck`, which needs PHP and a real install rather than a
 readable copy. The universal denial rule above catches the same class of defect
 without either cost.
+
+### Is the snapshot fresh? (`wiki-snapshot`)
+
+The suite above checks a **copy**, and nothing connects that copy to the wiki
+it came from. A stale copy checks last month's configuration and reports
+nothing wrong — the most dangerous kind of pass, because it looks identical to
+a genuinely clean run.
+
+**And the copy cannot date itself.** `rsync -a` preserves the remote's
+mtimes, so every timestamp inside it — files and directories alike —
+describes the *wiki's* history, not the copy's. A snapshot pulled ten minutes
+ago and one pulled in March read identically by their own file times.
+
+The `wiki-snapshot` check instead reads a marker the fetch script writes at
+the snapshot root: `<install_root>/.bunnyforge-snapshot-fetched-at`, an
+ISO-8601 UTC timestamp (`date -u +"%Y-%m-%dT%H:%M:%SZ"`, e.g.
+`2026-08-06T00:21:01Z`). Every finding it produces is `warn`, never `error` —
+the point is to stop a stale pass from looking clean, not to redden a run:
+
+- **Marker absent** — a copy obtained by hand, a mount, an unpacked backup —
+  warns that the snapshot's age is unknown, honestly rather than
+  accusingly: absence is a legitimate way to get a copy.
+- **Marker present but older than the threshold** warns, naming the age in
+  days and the threshold.
+- **Marker malformed or unparseable** warns saying so.
+- **Marker present and fresh** produces no finding.
+
+A stale or unknown-age snapshot never changes the exit code by itself — only
+an `error`-severity finding does that, and this check never produces one. The
+threshold defaults to 30 days and is configurable:
+
+```toml
+[wiki]
+snapshot_max_age_days = 14
+```
+
+Must be a positive integer; refused instructionally otherwise (a wrong type,
+or a value ≤ 0, at `campaign.toml` parse time).
+
+### Refreshing the snapshot (`--fetch-latest`)
+
+    python3 -m bunnyforge.review wiki --fetch-latest
+
+Two commands where one would do is exactly how a stale snapshot happens:
+forgetting to refresh the copy before reviewing. `--fetch-latest` runs a
+**configured command** and refuses to review if it fails:
+
+```toml
+[wiki]
+fetch_command = "./scripts/fetch-wiki-snapshot.sh"
+```
+
+**bunnyforge never learns what ssh is.** It runs whatever the operator
+configured, waits, and checks the exit status — rsync, scp, sftp, a mount
+refresh, anything. That keeps the tool transport-agnostic, and keeps it
+useful to someone on a hosted wiki with no shell access, who simply does not
+set `fetch_command` and does not pass the flag.
+
+Mechanically: the command is split with `shlex.split` and run with
+`shell=False` — never a shell — from the **workspace root**, so a relative
+path like `./scripts/...` resolves the way the operator wrote it. Its
+stdout and stderr are always printed: the whole point of this flag is that
+the fetch owns its own self-labelled error messages, so swallowing them would
+defeat it. A non-zero exit means the review is refused (a non-zero exit,
+`--html` not written, the suite never runs) with a message making clear the
+*fetch* failed, not a check — exactly what `fetch && review` does in a shell,
+and equally clear about which half failed.
+
+`--fetch-latest` with no `fetch_command` configured is refused
+instructionally, naming the key and the TOML shape, before anything runs.
+It is also refused on a suite that does not use a wiki root (`checkup`) —
+there being nothing there for it to refresh.
+
+**This is a code-execution surface.** `fetch_command` is a shell command
+`campaign.toml` names and `review.py` executes. It is the operator's own
+file, at the same trust level as a `Makefile` or an `npm` script — not
+sandboxed, not vetted — and should be treated that way rather than
+discovered.

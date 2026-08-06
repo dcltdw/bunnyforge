@@ -435,6 +435,50 @@ class TestWikiConfig(unittest.TestCase):
         with self.assertRaises(_config.ConfigError):
             self._load('wiki = "x"\n[campaign]\nnamespace = "test"\n')
 
+    def test_snapshot_max_age_days_defaults_to_30(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n')
+        self.assertEqual(cfg.snapshot_max_age_days, 30)
+
+    def test_snapshot_max_age_days_parsed(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n'
+                         '[wiki]\nsnapshot_max_age_days = 7\n')
+        self.assertEqual(cfg.snapshot_max_age_days, 7)
+
+    def test_snapshot_max_age_days_non_int_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\nsnapshot_max_age_days = "30"\n')
+
+    def test_snapshot_max_age_days_bool_refused(self):
+        # bool is an int subclass; `= true` must not silently parse as 1.
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\nsnapshot_max_age_days = true\n')
+
+    def test_snapshot_max_age_days_zero_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\nsnapshot_max_age_days = 0\n')
+
+    def test_snapshot_max_age_days_negative_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\nsnapshot_max_age_days = -1\n')
+
+    def test_fetch_command_parsed(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n'
+                         '[wiki]\nfetch_command = "./scripts/fetch-wiki-snapshot.sh"\n')
+        self.assertEqual(cfg.fetch_command, "./scripts/fetch-wiki-snapshot.sh")
+
+    def test_fetch_command_absent_is_none(self):
+        cfg = self._load('[campaign]\nnamespace = "test"\n')
+        self.assertIsNone(cfg.fetch_command)
+
+    def test_fetch_command_non_string_refused(self):
+        with self.assertRaises(_config.ConfigError):
+            self._load('[campaign]\nnamespace = "test"\n'
+                       '[wiki]\nfetch_command = 7\n')
+
 
 class TestAcceptedConfig(unittest.TestCase):
     """[[review.accepted]] — accepting a specific finding, never a whole
