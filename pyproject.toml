@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77.0.3 is the floor for PEP 639 (SPDX `license` expression + `license-files`).
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +8,8 @@ name = "bunnyforge"
 version = "0.2.3"
 description = "Tools for running a TTRPG campaign workspace: review, export, deploy, name generation."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [{ name = "David Leung" }]
 requires-python = ">=3.11"
 classifiers = [
