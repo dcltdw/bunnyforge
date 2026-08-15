@@ -7,9 +7,11 @@ This is a creative writing workspace for a long-running tabletop RPG campaign.
 It is not a software project. The canonical material lives in files in this
 directory. Conversation history is not canon and must not be treated as such.
 
-Two directories are outside the canon: `_Archive/` (retired material that was
-used) and `_Ignore/` (raw material, plus retired work that set no precedent).
-Do not read either unless explicitly asked.
+Two directories are outside the canon, and they are not treated alike.
+`_Archive/` holds retired material that was used: **read it freely and reason
+from it** — decisions rest on precedent, which is the whole reason it is kept.
+`_Ignore/` holds raw material, plus retired work that set no precedent: **never
+read it** unless I name a file in it and ask.
 
 ## Read order
 
@@ -165,7 +167,10 @@ include the separator, even if the GM notes section is empty. A handout is a
 - Do not give NPCs knowledge they have no in-world route to acquiring.
 - Do not contradict `[[front-burner]]`; it outranks older files.
 - Do not rename, renumber, or silently retcon existing entities.
-- Do not draw facts from `_Archive/`. It is retired history, not canon.
+- Do not present `_Archive/` material as current. Read it freely — what was
+  decided, what was tried, and why the thing that replaced it looks the way it
+  does is exactly what it is for — but it is superseded by definition, so where
+  it disagrees with a live file, the live file wins.
 - Do not read `_Ignore/`. It is unmigrated raw material, unreviewed and
   partly contradicted by the rest of the workspace — plus retired work that set
   no precedent (see the deletion rule below). It is not canon, and it is not a
@@ -294,7 +299,7 @@ apply to any prep material produced here:
 - Nothing is deleted. Superseded material that was **used** moves to
   `_Archive/` with `status: retired`: it happened, so it is part of the record,
   and a retired thing still explains why what replaced it looks the way it
-  does. That is why `_Archive/` may be read when I ask for it.
+  does. That is why `_Archive/` is read freely rather than on request.
   Material that never got used, or that was used once and can never be relevant
   again, sets no precedent — an abandoned draft of something later rebuilt from
   scratch, or a one-time instruction that did its job and whose steps the
