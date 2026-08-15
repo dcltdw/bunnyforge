@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from importlib import resources
+from unittest import mock
 from pathlib import Path
 
 from bunnyforge import _config, init, review
@@ -170,14 +171,59 @@ class TestPackagedDataMatchesItsCanonical(unittest.TestCase):
                     f"packaged")
 
     def test_every_packaged_file_is_named_by_the_manifest(self):
-        # .DS_Store is excluded, not tolerated by accident: the repo lives in
-        # a Dropbox tree on macOS, so the Finder drops one into any directory
-        # that gets browsed, and without this filter the test fails for a
-        # reason that has nothing to do with drift.
+        # Two exclusions, neither tolerated by accident. Both are artefacts
+        # that appear in the tree for reasons having nothing to do with drift,
+        # which is the only thing this test is meant to catch.
+        #
+        # .DS_Store: the repo lives in a Dropbox tree on macOS, so the Finder
+        # drops one into any directory that gets browsed.
+        #
+        # __pycache__: data/tests/ ships sample test files, and running them --
+        # which is exactly what `bunnyforge run-tests` does in a real workspace
+        # -- leaves .pyc beside them, inside the INSTALLED package. That makes
+        # it a slow trap rather than a visible break: the failure surfaces some
+        # time after the run that caused it, names MANIFEST drift, and the
+        # obvious first move (clearing __pycache__ from the repo) changes
+        # nothing, because the caches are in site-packages. It also cannot fail
+        # in CI, which installs fresh -- so it only ever fires on a working
+        # machine, where a green suite matters most.
         packaged = {p.relative_to(_packaged_data_root()).as_posix()
                     for p in _packaged_data_root().rglob("*")
-                    if p.is_file() and p.name != ".DS_Store"}
+                    if p.is_file() and p.name != ".DS_Store"
+                    and "__pycache__" not in p.parts}
         self.assertEqual(packaged, {e.resource for e in init.MANIFEST})
+
+    def test_the_exclusions_do_not_blind_the_drift_check(self):
+        """Both halves of the filter, against a stand-in data root.
+
+        The risk an exclusion carries is that it grows broad enough to hide a
+        real packaged file MANIFEST forgot -- at which point the check above
+        passes for the wrong reason and nothing says so. So: a tree mirroring
+        MANIFEST exactly must pass *with* both artefacts present, and must
+        fail the moment a genuine file appears.
+
+        Built in a temp directory rather than by writing into the installed
+        package: site-packages is shared, and may not even be writable.
+        """
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        for resource in {e.resource for e in init.MANIFEST}:
+            dest = tmp / resource
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"stand-in\n")
+        # Exactly the two artefacts the exclusions exist for.
+        (tmp / ".DS_Store").write_bytes(b"")
+        cache = tmp / "tests" / "__pycache__"
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "example.cpython-313.pyc").write_bytes(b"")
+
+        with mock.patch(f"{__name__}._packaged_data_root", return_value=tmp):
+            # Positive control: the artefacts alone must not fail the check,
+            # or this test would pass even with the filters removed.
+            self.test_every_packaged_file_is_named_by_the_manifest()
+
+            (tmp / "unmanifested-sample.md").write_text("x", encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                self.test_every_packaged_file_is_named_by_the_manifest()
 
     def test_manifest_destinations_are_unique(self):
         # Two entries share a resource (each skeleton lands twice), which is
