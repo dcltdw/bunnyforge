@@ -7,8 +7,9 @@ This is a creative writing workspace for a long-running tabletop RPG campaign.
 It is not a software project. The canonical material lives in files in this
 directory. Conversation history is not canon and must not be treated as such.
 
-Two directories are outside the canon: `_Archive/` (retired) and `_Ignore/`
-(unmigrated raw material). Do not read either unless explicitly asked.
+Two directories are outside the canon: `_Archive/` (retired material that was
+used) and `_Ignore/` (raw material, plus retired work that set no precedent).
+Do not read either unless explicitly asked.
 
 ## Read order
 
@@ -166,8 +167,9 @@ include the separator, even if the GM notes section is empty. A handout is a
 - Do not rename, renumber, or silently retcon existing entities.
 - Do not draw facts from `_Archive/`. It is retired history, not canon.
 - Do not read `_Ignore/`. It is unmigrated raw material, unreviewed and
-  partly contradicted by the rest of the workspace. It is not canon, and it is
-  not a fallback when an answer cannot be found elsewhere. The only exception is
+  partly contradicted by the rest of the workspace — plus retired work that set
+  no precedent (see the deletion rule below). It is not canon, and it is not a
+  fallback when an answer cannot be found elsewhere. The only exception is
   a file in it that I name explicitly and ask you to work on.
 - Do not read `_ExtractInbound/` unless I ask you to extract from it. It is a
   staging area for imported material, none of it canon. See its own section
@@ -289,8 +291,18 @@ apply to any prep material produced here:
 - Brief filenames must match their writeup: `Briefs/session-014/mira-venn.md` pairs
   with `NPCs/mira-venn.md`. A mismatch produces a sheet built from the brief alone.
 - Generated sheets in `Sheets/` are not canon and are not edited by hand.
-- Nothing is deleted. Superseded material moves to `_Archive/` with `status:
-  retired`.
+- Nothing is deleted. Superseded material that was **used** moves to
+  `_Archive/` with `status: retired`: it happened, so it is part of the record,
+  and a retired thing still explains why what replaced it looks the way it
+  does. That is why `_Archive/` may be read when I ask for it.
+  Material that never got used, or that was used once and can never be relevant
+  again, sets no precedent — an abandoned draft of something later rebuilt from
+  scratch, or a one-time instruction that did its job and whose steps the
+  result has since contradicted. That moves to `_Ignore/` instead, which is
+  never read at all. Note what the second move costs: `_Ignore/` is git-ignored,
+  so the file leaves version control. It stays on disk, and its history up to
+  the move remains, but a fresh clone will not contain it — which is the
+  intended end state for material that constrains nothing.
 
 ## At the end of a working session
 
