@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bunnyforge"
-version = "0.2.3"
+version = "0.3.0"
 description = "Tools for running a TTRPG campaign workspace: review, export, deploy, name generation."
 readme = "README.md"
 license = "GPL-3.0-or-later"
