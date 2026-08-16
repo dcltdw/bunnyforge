@@ -42,6 +42,73 @@ class TestPackagedContract(unittest.TestCase):
         self.assertEqual(vscode.disable_region(on, begin, end), lines)
 
 
+def _hand_switched_to_saturated() -> list[str]:
+    """The packaged file with the palette switched BY HAND, exactly as the
+    header comment describes: the active (high) palette commented out with
+    plain "//" — never "//- ", which the toggle owns — and the saturated
+    alternate uncommented, carrying the separator its new neighbours need.
+    """
+    lines = (init.packaged_bytes("vscode/settings.json")
+             .decode("utf-8").split("\n"))
+    begin, _ = vscode.maybe_region(lines)
+    sat = next(i for i, l in enumerate(lines)
+               if l.strip().startswith("// ── ALTERNATE: saturated"))
+    sub = next(i for i, l in enumerate(lines)
+               if l.strip().startswith("// ── ALTERNATE: subtle"))
+    out = list(lines)
+    for i in range(begin + 1, sat):
+        indent, body = vscode._split_indent(out[i])
+        if body.startswith(vscode.OFF_PREFIX):
+            out[i] = indent + "// " + body[len(vscode.OFF_PREFIX):]
+    live = []
+    for i in range(sat + 1, sub):
+        indent, body = vscode._split_indent(out[i])
+        if body.startswith("// "):
+            out[i] = indent + body[3:]
+            live.append(i)
+    out[live[-1]] += ","          # a live member now: "table" follows it
+    return out
+
+
+class TestPackagedPaletteSwitch(unittest.TestCase):
+    """Finding 1: the header's switch instructions have to be a procedure
+    the engine survives — "//- " is the toggle's prefix, not the user's."""
+
+    def _lines(self) -> list[str]:
+        return (init.packaged_bytes("vscode/settings.json")
+                .decode("utf-8").split("\n"))
+
+    def test_the_header_documents_the_plain_comment_switch(self):
+        lines = self._lines()
+        begin, _ = vscode.maybe_region(lines)
+        header = "\n".join(lines[:begin])
+        self.assertIn("--replace", header)       # the supported restore
+        self.assertIn('"//"', header)            # how to deactivate a palette
+
+    def test_a_hand_switched_palette_reports_on_and_is_valid_json(self):
+        lines = _hand_switched_to_saturated()
+        begin, end = vscode.maybe_region(lines)
+        self.assertEqual(vscode.region_state(lines, begin, end), "on")
+        data = json.loads("\n".join(
+            l for l in lines if not l.strip().startswith("//")))
+        self.assertIn("highlight.regexes", data)
+        self.assertIn("#ef4444",                 # the saturated palette, live
+                      json.dumps(data["highlight.regexes"]))
+
+    def test_vscode_on_is_a_no_op_on_a_hand_switched_palette(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        before = "\n".join(_hand_switched_to_saturated())
+        (ws / ".vscode" / "settings.json").write_text(before, encoding="utf-8")
+        with mock.patch.object(vscode, "_offer_highlight"), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        self.assertIn("already on", out.getvalue())
+        self.assertEqual((ws / ".vscode" / "settings.json")
+                         .read_text("utf-8"), before)
+
+
 SAMPLE_OFF = """\
 {
   // prose above the marker — never load-bearing
@@ -188,6 +255,20 @@ class TestStructuralEdits(unittest.TestCase):
         self.assertEqual(data["editor.rulers"], [80])
         self.assertIn("highlight.regexes", data)
 
+    def test_splice_ignores_a_comment_shaped_like_an_opening_brace(self):
+        # A header comment ending in `{` must not become the splice point:
+        # the region would land outside the settings object.
+        doc = ['// tuned for project {',
+               '{',
+               '  "editor.rulers": [80]',
+               '}',
+               '']
+        out, data = self._spliced_json(doc)
+        begin, _ = vscode.maybe_region(out)
+        self.assertEqual(out.index('{'), begin - 1)   # inside the object
+        self.assertIn("highlight.regexes", data)
+        self.assertEqual(data["editor.rulers"], [80])
+
     def test_splice_refuses_a_file_with_no_closing_brace(self):
         with self.assertRaises(vscode.VscodeError):
             vscode.splice_region(['not a settings object'])
@@ -202,6 +283,48 @@ class TestStructuralEdits(unittest.TestCase):
         # everything outside the span is byte-identical
         self.assertEqual(out[:begin], UNMANAGED[:2])
         self.assertEqual(out[end + 1:], UNMANAGED[7:])
+
+    def _both_states(self, lines):
+        """The file parsed as strict JSON in BOTH toggle states — the
+        property comma normalisation exists to hold."""
+        begin, end = vscode.maybe_region(lines)
+        return tuple(
+            json.loads("\n".join(l for l in state
+                                 if not l.strip().startswith("//")))
+            for state in (vscode.enable_region(lines, begin, end),
+                          vscode.disable_region(lines, begin, end)))
+
+    def test_adopt_of_a_last_member_key_is_valid_in_both_states(self):
+        # The member before a last-placed region keeps a comma that
+        # dangles the moment `off` comments the region out.
+        doc = ['{',
+               '  "editor.tabSize": 2,',
+               '  "highlight.regexes": {',
+               '    "^x$": { "a": 1 }',
+               '  }',
+               '}',
+               '']
+        out = vscode.adopt_key(doc, 2)
+        on, off = self._both_states(out)
+        self.assertEqual(on["editor.tabSize"], 2)
+        self.assertIn("highlight.regexes", on)
+        self.assertEqual(off, {"editor.tabSize": 2})
+        self.assertIn('    "^x$": { "a": 1 }', out)   # content untouched
+
+    def test_adopt_of_a_sole_key_is_valid_in_both_states(self):
+        doc = ['{', '  "highlight.regexes": {},', '}', '']
+        on, off = self._both_states(vscode.adopt_key(doc, 1))
+        self.assertEqual(list(on), ["highlight.regexes"])
+        self.assertEqual(off, {})
+
+    def test_replace_of_a_last_placed_region_is_valid_in_both_states(self):
+        # `on` into `{}` strips the region's trailing comma; `--replace`
+        # restores the packaged region, which still carries it.
+        doc = vscode.splice_region(['{', '}'])
+        begin, end = vscode.maybe_region(doc)
+        on, off = self._both_states(vscode.replace_region(doc, begin, end))
+        self.assertEqual(list(on), ["highlight.regexes"])
+        self.assertEqual(off, {})
 
     def test_replace_swaps_region_content_for_packaged(self):
         begin, end = vscode.maybe_region(SAMPLE_OFF)
@@ -519,6 +642,48 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("off", out.getvalue())
 
+    def _status_env(self, editors):
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=editors))
+        self.enterContext(mock.patch.object(vscode, "_run",
+                                            return_value=_proc("")))
+        self.enterContext(mock.patch.object(
+            vscode, "latest_release",
+            return_value=vscode.latest_release(
+                fetch=lambda url: RELEASE_JSON)))
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_WORKSPACE"}
+        self.enterContext(mock.patch.dict(os.environ, env, clear=True))
+        self.enterContext(mock.patch.object(Path, "cwd", return_value=tmp))
+
+    def test_status_never_prompts_when_several_editors_are_found(self):
+        # A read-only report must not block on "install into [1]:".
+        self._status_env([
+            vscode.Editor("code", "Visual Studio Code", "/u/code", True),
+            vscode.Editor("cursor", "Cursor", "/u/cursor", False),
+        ])
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=True))
+        ask = self.enterContext(mock.patch.object(
+            vscode, "_ask", side_effect=AssertionError("status prompted")))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status"])
+        self.assertEqual(rc, 0)
+        ask.assert_not_called()
+        self.assertIn("Visual Studio Code", out.getvalue())   # stable wins
+        self.assertNotIn("install into", out.getvalue())
+
+    def test_status_says_when_the_editor_filter_matched_nothing(self):
+        self._status_env([
+            vscode.Editor("code", "Visual Studio Code", "/u/code", True)])
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status", "--editor", "bogus"])
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("bogus", text)                  # the filter, named
+        self.assertIn("Visual Studio Code", text)     # what it reports on
+
     def test_status_degrades_when_github_is_unreachable(self):
         editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
         self.enterContext(mock.patch.object(
@@ -659,6 +824,43 @@ class TestOnOff(unittest.TestCase):
         self.assertIn('"markdown.preview.frontMatter": "table"',
                       "\n".join(lines))
 
+    def test_on_replace_after_on_into_an_empty_object(self):
+        # Two commands from a bare `{}`: the region is the sole member,
+        # so the packaged region's trailing comma must not come back.
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_text("{\n}\n",
+                                                      encoding="utf-8")
+        self.assertEqual(self._on(ws)[0], 0)
+        self.assertEqual(self._on(ws, "--replace")[0], 0)
+        json.loads("\n".join(l for l in _settings_of(ws)
+                             if not l.strip().startswith("//")))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(vscode.main(["off", "--workspace", str(ws)]), 0)
+        self.assertEqual(json.loads("\n".join(
+            l for l in _settings_of(ws)
+            if not l.strip().startswith("//"))), {})
+
+    def test_adopt_then_off_leaves_valid_json(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_text(
+            '{\n'
+            '  "editor.tabSize": 2,\n'
+            '  "highlight.regexes": {\n'
+            '    "^tuned$": { "regexFlags": "gm" }\n'
+            '  }\n'
+            '}\n', encoding="utf-8")
+        self.assertEqual(self._on(ws, "--adopt")[0], 0)
+        data = json.loads("\n".join(l for l in _settings_of(ws)
+                                    if not l.strip().startswith("//")))
+        self.assertIn("^tuned$", json.dumps(data["highlight.regexes"]))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(vscode.main(["off", "--workspace", str(ws)]), 0)
+        self.assertEqual(json.loads("\n".join(
+            l for l in _settings_of(ws)
+            if not l.strip().startswith("//"))), {"editor.tabSize": 2})
+
     def test_off_with_no_file_is_a_named_error(self):
         ws = _ws(self)
         with contextlib.redirect_stderr(io.StringIO()) as err:
@@ -764,6 +966,29 @@ class TestOfferHighlight(unittest.TestCase):
         self.assertIn(
             ["/u/code", "--install-extension", vscode.HIGHLIGHT_ID],
             [c.args[0] for c in run.call_args_list])
+
+    def test_a_failed_highlight_install_does_not_fail_the_toggle(self):
+        # The file was already written; the offer is a courtesy, so a
+        # non-zero editor CLI is a note, never the command's exit code.
+        ws = _ws(self)
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        self.enterContext(mock.patch.object(
+            vscode, "_run", return_value=_proc("", 1, "marketplace down")))
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=True))
+        self.enterContext(mock.patch.object(vscode, "_ask", return_value="y"))
+        with contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("note:", out.getvalue())
+        self.assertIn("marketplace down", out.getvalue())
+        lines = _settings_of(ws)
+        self.assertEqual(vscode.region_state(
+            lines, *vscode.maybe_region(lines)), "on")
 
     def test_non_interactive_on_prints_a_hint_instead(self):
         ws = _ws(self)

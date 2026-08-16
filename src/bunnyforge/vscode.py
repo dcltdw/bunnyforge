@@ -129,6 +129,92 @@ def disable_region(lines: list[str], begin: int, end: int) -> list[str]:
 
 # ── Structural edits: create, adopt, replace ────────────────────────────
 
+def _is_live(line: str) -> bool:
+    """A line carrying JSON the parser sees — not blank, not a comment."""
+    body = line.strip()
+    return bool(body) and not body.startswith("//")
+
+
+def _drop_comma(line: str) -> str:
+    """The same line without its trailing comma, indent, OFF_PREFIX and
+    any line-ending kept exactly as they were."""
+    indent, body = _split_indent(line)
+    prefix = ""
+    if body.startswith(OFF_PREFIX):
+        prefix, body = OFF_PREFIX, body[len(OFF_PREFIX):]
+    stripped = body.rstrip()
+    if stripped.endswith(","):
+        body = stripped[:-1] + body[len(stripped):]
+    return indent + prefix + body
+
+
+def _last_member_line(lines: list[str], begin: int, end: int) -> int | None:
+    """The region's last line that is a JSON member in SOME toggle state —
+    live or OFF_PREFIX-disabled. Plain `//` prose (the alternates) is not a
+    member and never carries the region's separator."""
+    for i in range(end - 1, begin, -1):
+        body = lines[i].strip()
+        if body.startswith(OFF_PREFIX) or _is_live(lines[i]):
+            return i
+    return None
+
+
+def _object_bounds(lines: list[str]) -> tuple[int, int] | None:
+    """(opening, closing) line indices of the settings object, or None.
+
+    The opener is the first NON-COMMENT line ending in `{`: a file headed
+    by a `// {`-shaped comment would otherwise have the region spliced
+    outside the object entirely.
+    """
+    opens = next((i for i, l in enumerate(lines)
+                  if _is_live(l) and l.strip().endswith("{")), None)
+    close = next((i for i in range(len(lines) - 1, -1, -1)
+                  if lines[i].strip() == "}"), None)
+    if opens is None or close is None or close <= opens:
+        return None
+    return opens, close
+
+
+def normalise_commas(lines: list[str]) -> list[str]:
+    """Repair the commas either side of the managed region so the file is
+    valid JSON in BOTH toggle states — the one sanctioned edit outside the
+    markers, made only by the structural edits, never by the toggle.
+
+    The region's separator has to live INSIDE the markers, because a comma
+    outside them is a separator in one state and a dangling comma in the
+    other. Region-first (splice's placement) gets that for free: the
+    region's last member line carries the trailing comma, commented out
+    along with everything else when `off` runs. A region that ends up LAST
+    instead — `adopt` of a last-member key — needs the mirror image: the
+    member before it gives up the comma it can no longer justify once the
+    region is commented out, and the separator moves inside the markers on
+    a line of its own.
+    """
+    region = maybe_region(lines)
+    bounds = _object_bounds(lines)
+    if region is None or bounds is None:
+        return lines
+    begin, end = region
+    opens, close = bounds
+    if not opens < begin or not end < close:
+        return lines
+    out = list(lines)
+    following = [i for i in range(end + 1, close) if _is_live(out[i])]
+    if following:
+        out[following[-1]] = _drop_comma(out[following[-1]])
+        return out
+    last = _last_member_line(out, begin, end)
+    if last is not None:
+        out[last] = _drop_comma(out[last])
+    preceding = [i for i in range(opens + 1, begin) if _is_live(out[i])]
+    if preceding:
+        out[preceding[-1]] = _drop_comma(out[preceding[-1]])
+        indent = _split_indent(out[begin])[0]
+        off = region_state(out, begin, end) == "off"
+        out.insert(begin + 1, indent + (OFF_PREFIX if off else "") + ",")
+    return out
+
+
 def key_span(lines: list[str], start: int) -> int:
     """Last line index of the JSON value opened on lines[start].
 
@@ -190,53 +276,41 @@ def splice_region(lines: list[str]) -> list[str]:
 
     Region-first is the contract's own placement (#34 item 3): the packaged
     region ends `//- },` because a member follows it there, so splicing it
-    last would leave a trailing comma and invalid JSON. Comma normalisation
-    either side of the region is the one sanctioned edit outside the markers,
-    and it happens only here, at creation.
+    last would leave a trailing comma and invalid JSON. `normalise_commas`
+    then repairs the joins either side of it.
     """
-    opens = next((i for i, l in enumerate(lines)
-                  if l.strip().endswith("{")), None)
-    close = next((i for i in range(len(lines) - 1, -1, -1)
-                  if lines[i].strip() == "}"), None)
-    if opens is None or close is None or close <= opens:
+    bounds = _object_bounds(lines)
+    if bounds is None:
         raise VscodeError(
             f"{SETTINGS_REL} is not a settings object this tool can edit "
             f"(no opening or closing brace on a line of its own) — fix or "
             f"remove the file, then re-run")
+    opens, _ = bounds
     region = packaged_region_lines()
-    out = lines[:opens + 1] + region + lines[opens + 1:]
-    region_end = opens + len(region)
-    close += len(region)
-    following = [i for i in range(region_end + 1, close)
-                 if out[i].strip() and not out[i].strip().startswith("//")]
-    if following:
-        last = following[-1]
-        if out[last].rstrip().endswith(","):
-            out[last] = out[last].rstrip()[:-1]
-    else:
-        for i in range(region_end - 1, opens, -1):
-            indent, body = _split_indent(out[i])
-            if body.startswith(OFF_PREFIX) and body.rstrip().endswith(","):
-                out[i] = indent + body.rstrip()[:-1]
-                break
-    return out
+    return normalise_commas(lines[:opens + 1] + region + lines[opens + 1:])
 
 
 def adopt_key(lines: list[str], key_idx: int) -> list[str]:
     """Bracket the existing rules with the markers, content untouched —
     the minimum span, key line through its closing brace. Nearby
     commented-out blocks stay outside: they are comments, and `off` never
-    needs to touch them."""
+    needs to touch them. Only the commas either side are normalised —
+    without that, adopting the object's LAST member leaves the member
+    before it with a comma that dangles as soon as `off` runs."""
     end = key_span(lines, key_idx)
     indent = _split_indent(lines[key_idx])[0]
     out = list(lines)
     out.insert(end + 1, indent + MARKER_END)
     out.insert(key_idx, indent + MARKER_BEGIN)
-    return out
+    return normalise_commas(out)
 
 
 def replace_region(lines: list[str], begin: int, end: int) -> list[str]:
-    return lines[:begin] + packaged_region_lines() + lines[end + 1:]
+    """The packaged region in place of the current one, commas normalised:
+    the packaged region ends `//- },`, which is a dangling comma when the
+    region is the object's last (or only) member."""
+    return normalise_commas(
+        lines[:begin] + packaged_region_lines() + lines[end + 1:])
 
 
 # ── Editors ─────────────────────────────────────────────────────────────
@@ -297,7 +371,11 @@ def discover_editors(which=shutil.which, platform=sys.platform,
     return found
 
 
-def pick_editor(editors: list[Editor], wanted: str | None) -> Editor:
+def pick_editor(editors: list[Editor], wanted: str | None, *,
+                prompt: bool = True) -> Editor:
+    """The editor to act on. `prompt=False` is for read-only callers
+    (status): resolve stable-else-first and never ask — "install into"
+    is both a block and a lie in a command that installs nothing."""
     if wanted:
         match = next((e for e in editors if e.cli_id == wanted), None)
         if match is None:
@@ -313,6 +391,8 @@ def pick_editor(editors: list[Editor], wanted: str | None) -> Editor:
     if len(editors) == 1:
         return editors[0]
     stable = next((e for e in editors if e.cli_id == "code"), None)
+    if not prompt:
+        return stable or editors[0]
     if not _interactive():
         if stable:
             return stable
@@ -550,9 +630,12 @@ def cmd_status(args) -> int:
               "locations)")
     else:
         try:
-            editor = pick_editor(editors, args.editor)
-        except VscodeError:
+            editor = pick_editor(editors, args.editor, prompt=False)
+        except VscodeError as exc:
+            # An unmatched --editor must not silently become a report
+            # about a different editor.
             editor = editors[0]
+            print(f"note           {exc}; reporting on {editor.cli_id}")
         print(f"editor         {editor.label} ({editor.path})")
         try:
             installed = installed_version(editor)
@@ -677,9 +760,13 @@ def _offer_highlight(args) -> None:
         return
     proc = _run([editor.path, "--install-extension", HIGHLIGHT_ID])
     if proc.returncode != 0:
-        raise VscodeError(
-            f"{editor.cli_id} --install-extension {HIGHLIGHT_ID} failed: "
-            f"{proc.stderr.strip() or proc.returncode}")
+        # A note, not an error: the toggle is already on disk, and failing
+        # the command here would report the write as unsuccessful.
+        print(f"note: {editor.cli_id} --install-extension {HIGHLIGHT_ID} "
+              f"failed: {proc.stderr.strip() or proc.returncode}")
+        print(f"note: the rules render only once {HIGHLIGHT_ID} is "
+              f"installed")
+        return
     print(f"installed {HIGHLIGHT_ID} (newest release) into {editor.label}")
 
 

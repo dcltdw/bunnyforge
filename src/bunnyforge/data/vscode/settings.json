@@ -18,9 +18,15 @@
   // ships OFF: every disabled line starts with "//- " — a prefix
   // reserved for the toggle; ordinary comments use plain "//". Turn
   // colouring on with `bunnyforge vscode on` (or delete every "//- "
-  // prefix by hand); `bunnyforge vscode off` re-disables it. ACTIVE
-  // LEVEL: high; to switch, re-disable the high block and enable one
-  // alternate below.
+  // prefix by hand); `bunnyforge vscode off` re-disables it.
+  //
+  // ACTIVE PALETTE: high. Switching is a hand edit: comment every line
+  // of the palette you are leaving out with plain "//" — never "//- ",
+  // which belongs to the toggle and would re-enable the old palette
+  // alongside the new one — then uncomment one alternate below,
+  // matching the commas of the block you replaced (a live palette needs
+  // a trailing comma when a setting follows it). `bunnyforge vscode on
+  // --replace` restores the packaged high palette.
   // bunnyforge:begin visibility-colouring
   //- "highlight.regexes": {
     //- "^(visibility:\\s*gm-only\\s*)$": {
