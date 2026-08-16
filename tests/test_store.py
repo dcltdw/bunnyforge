@@ -162,5 +162,69 @@ class TestSearch(StoreCase):
         self.assertEqual(store.search("nothing here says this"), [])
 
 
+
+# A self-contained culture, built here rather than copied from the shipped
+# inventories: a portable test builds its own fixtures, and this one then
+# cannot break when the packaged cultures change. Minimal but valid --
+# `name` plus the four required keys, plus given_<category> for the one
+# declared category.
+CULTURE = """
+name            = "Testland"
+categories      = ["personal"]
+family          = ["Alba", "Bern", "Cass", "Dorn"]
+given_personal  = ["ka", "lo", "mi", "ru", "ta"]
+place           = ["Ash", "Bel", "Cor", "Dun"]
+place_tail      = ["ford", "mere", "wick", "holm"]
+"""
+
+
+class TestGenerateNames(StoreCase):
+
+    def make_names_ws(self) -> _config.Workspace:
+        ws = self.make_ws('\n[names]\ncultures = "cultures"\n')
+        cultures = ws.root / "cultures"
+        cultures.mkdir()
+        (cultures / "testland.toml").write_text(CULTURE, encoding="utf-8")
+        return ws
+
+    def test_generates_people_and_places(self):
+        store = _store.WorkspaceStore(self.make_names_ws())
+        out = store.generate_names("Testland", 5)
+        self.assertEqual(out["culture"], "testland")
+        self.assertEqual(len(out["people"]), 5)
+        self.assertEqual(len(out["places"]), 5)
+        self.assertTrue(all(isinstance(n, str) and n.strip()
+                            for n in out["people"] + out["places"]))
+
+    def test_names_are_drawn_from_this_culture_only(self):
+        # The generator's whole promise is that a name belongs to its
+        # culture; a family name from nowhere in the inventory would mean
+        # the wrong culture was resolved.
+        store = _store.WorkspaceStore(self.make_names_ws())
+        out = store.generate_names("Testland", 10)
+        for person in out["people"]:
+            self.assertIn(person.split()[0],
+                          ["Alba", "Bern", "Cass", "Dorn"], person)
+
+    def test_unknown_culture_raises_listing_the_available_ones(self):
+        store = _store.WorkspaceStore(self.make_names_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.generate_names("martian", 3)
+        self.assertIn("testland", str(ctx.exception))
+
+    def test_unconfigured_names_is_a_store_error_not_a_crash(self):
+        # No [names] at all: the remote agent must get an explainable
+        # refusal, not an InventoryError leaking through the tool layer.
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.generate_names("testland", 3)
+
+    def test_count_is_clamped_at_both_ends(self):
+        store = _store.WorkspaceStore(self.make_names_ws())
+        self.assertEqual(len(store.generate_names("Testland", 999)["people"]),
+                         _store.NAME_COUNT_CAP)
+        self.assertEqual(len(store.generate_names("Testland", 0)["people"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

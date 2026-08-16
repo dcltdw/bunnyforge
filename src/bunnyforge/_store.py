@@ -19,13 +19,16 @@ belongs on the class, never in free functions serve_mcp.py calls directly.
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 from bunnyforge import _common
+from bunnyforge import generate_names as _names
 from bunnyforge._config import Workspace
 
 SEARCH_CAP = 50       # hits per search reply; the reply says when it truncated
 SNIPPET_RADIUS = 80   # characters of context on each side of a match
+NAME_COUNT_CAP = 50   # names per request; a brainstorm needs a handful, not a page
 
 
 class StoreError(Exception):
@@ -154,3 +157,37 @@ class WorkspaceStore:
                              "narrow the query)"})
                 break
         return hits
+
+    # -- generators ---------------------------------------------------------
+
+    def generate_names(self, culture: str, count: int) -> dict:
+        """Culture-appropriate person and place names for this setting.
+
+        A thin wrapper over the existing generator, which already owns every
+        rule about how a culture's names are built. Its exceptions are
+        translated to StoreError here: an InventoryError reaching the tool
+        layer would surface to the remote agent as a crash rather than as
+        something it could act on.
+        """
+        count = max(1, min(int(count), NAME_COUNT_CAP))
+        try:
+            inv = _names.load_inventory(self.ws)
+        except _names.InventoryError as exc:
+            raise StoreError(str(exc)) from exc
+
+        # resolve() answers a key, a list of candidates when an alias is
+        # ambiguous, or None. Only the first is usable — guessing between
+        # two cultures would be worse than refusing.
+        key = _names.resolve(inv.cultures, culture)
+        if not isinstance(key, str):
+            available = ", ".join(sorted(inv.cultures))
+            hint = ("ambiguous" if isinstance(key, list) else "unknown")
+            raise StoreError(
+                f"{hint} culture {culture!r} — available: {available}")
+
+        rng = random.Random()
+        return {"culture": key,
+                "people": [_names.person_name(rng, inv, key, None)
+                           for _ in range(count)],
+                "places": [_names.place_name(rng, inv, key)
+                           for _ in range(count)]}
