@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -232,6 +233,40 @@ class TestPackagedDataMatchesItsCanonical(unittest.TestCase):
         # overwrites the other.
         dests = [e.dest for e in init.MANIFEST]
         self.assertEqual(sorted(dests), sorted(set(dests)))
+
+    def test_the_readme_inventory_matches_the_manifest(self):
+        # The package README states what init writes as a count, and prose
+        # about the packaged files is embedded doctrine in miniature -- the
+        # exact thing this module's docstring says the manifest exists to
+        # stop drifting silently. It drifted twice before anyone noticed:
+        # it claimed all 16 _Templates/ files when init had written 12 since
+        # the skeletons stopped landing there, and it named neither the
+        # tests/ nor the .vscode/ scaffold. Discipline has now failed on this
+        # one sentence twice, which is the argument for a test rather than
+        # for trying harder (issue #37).
+        #
+        # The TOTAL only, deliberately: the per-group figures are woven
+        # through a prose sentence, so pinning each would tax every rewording
+        # while adding nothing -- the total is what a forgotten MANIFEST
+        # entry moves.
+        #
+        # Asserted unconditionally rather than if-present like the canonicals
+        # above: those are campaign-side files that do not survive the public
+        # cut, whereas this README ships in every repo, so its absence is a
+        # defect anywhere rather than an artefact of the cut.
+        readme = REPO / "src" / "bunnyforge" / "README.md"
+        stated = re.search(r"What it writes — (\d+) files",
+                           readme.read_text(encoding="utf-8"))
+        self.assertIsNotNone(
+            stated,
+            "src/bunnyforge/README.md's inventory sentence has been reworded "
+            "past the pattern this test reads -- restate the count or update "
+            "the pattern, because an unmatched regex would pass vacuously "
+            "and silently retire the guard")
+        self.assertEqual(
+            int(stated.group(1)), len(init.MANIFEST),
+            f"src/bunnyforge/README.md says init writes {stated.group(1)} "
+            f"files; MANIFEST has {len(init.MANIFEST)} entries")
 
 
 class TestSlugify(unittest.TestCase):
