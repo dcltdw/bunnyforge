@@ -63,6 +63,16 @@ campaign tests it invites you to write — the setting-specific invariants
 and ships a worked example, commented out, to adapt. `bunnyforge test`
 runs them, and checks that no test wrote into your campaign while running.
 
+It also scaffolds a `.vscode/` pair, shipped switched off. `settings.json`
+holds a block that colours `.md` files by their front-matter `visibility`
+— red for `gm-only`, green for `player-visible`, cyan for `mixed`, in
+dark and light variants — with every line of it commented out behind a
+`//- ` prefix, so a fresh workspace renders exactly as it would without
+the file. Delete the prefixes to switch it on; the header comment says so
+in place, and carries two alternate palettes to swap in.
+`extensions.json` recommends the extension that renders it — without it
+installed, the files simply render plain.
+
 ## Names
 
 `bunnyforge names` builds names from syllable inventories you write
