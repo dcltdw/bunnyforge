@@ -453,6 +453,28 @@ class TestReleaseClient(unittest.TestCase):
         with self.assertRaises(vscode.VscodeError):
             vscode.latest_release(fetch=lambda url: json.dumps(data).encode())
 
+    def test_a_malformed_body_is_a_named_error_not_a_traceback(self):
+        # A 200 carrying an HTML error page, a bare API message, or a
+        # release object missing the fields we read: all VscodeError,
+        # because main() only catches those (and OSError).
+        bodies = {
+            "html": b"<html>404 not found</html>",
+            "not an object": b'"nope"',
+            "api message": b'{"message": "Not Found"}',
+            "no tag_name": json.dumps(
+                {"assets": [{"name": "x.vsix",
+                             "browser_download_url": "u", "size": 1}]}
+            ).encode(),
+            "no download url": json.dumps(
+                {"tag_name": "v1.0.0", "assets": [{"name": "x.vsix"}]}
+            ).encode(),
+            "assets not a list": b'{"tag_name": "v1.0.0", "assets": 3}',
+        }
+        for label, body in bodies.items():
+            with self.subTest(label):
+                with self.assertRaises(vscode.VscodeError):
+                    vscode.latest_release(fetch=lambda url, b=body: b)
+
     def test_network_failure_degrades_to_a_named_error(self):
         def down(url):
             raise OSError("no route to host")
@@ -512,6 +534,18 @@ class TestCache(unittest.TestCase):
                 vscode.obtain_vsix(self._release(), fetch=lambda url: b"eviL")
         self.assertEqual(list(tmp.iterdir()), [])
 
+    def test_a_hostile_tag_cannot_escape_the_cache_directory(self):
+        # tag and asset name are API-supplied strings on their way into a
+        # path that gets mkdir(parents=True).
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        release = self._release()._replace(
+            tag="../../../../tmp/pwned", vsix_name="../x.vsix")
+        with mock.patch.object(vscode, "cache_dir", return_value=tmp):
+            path = vscode.obtain_vsix(release, fetch=lambda url: b"vsix")
+        self.assertEqual(path.parent, tmp)
+        self.assertNotIn("/", path.name)
+        self.assertEqual(path.read_bytes(), b"vsix")
+
     def test_a_corrupt_cached_file_is_re_downloaded(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         release = self._release()
@@ -564,6 +598,29 @@ class TestInstallUpdate(unittest.TestCase):
         install_call = run.call_args_list[-1].args[0]
         self.assertEqual(install_call[:2], ["/u/code", "--install-extension"])
         self.assertIn("--force", install_call)
+
+    def test_the_consent_block_says_the_digest_was_verified(self):
+        _machine_env(self)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            vscode.main(["install", "--yes"])
+        self.assertIn("digest", out.getvalue())
+        self.assertIn("(verified)", out.getvalue())
+
+    def test_the_consent_block_says_when_no_digest_was_published(self):
+        # Without a digest the check degrades to length only; consent has
+        # to say so rather than imply a tamper-proof download.
+        real = vscode.latest_release
+        _machine_env(self)
+        data = json.loads(RELEASE_JSON)
+        del data["assets"][1]["digest"]
+        self.enterContext(mock.patch.object(
+            vscode, "latest_release",
+            return_value=real(fetch=lambda url: json.dumps(data).encode())))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["install", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("none published", out.getvalue())
+        self.assertIn("size only", out.getvalue())
 
     def test_install_is_idempotent_at_the_current_version(self):
         run = _machine_env(self, installed="0.2.0")
@@ -683,6 +740,19 @@ class TestStatus(unittest.TestCase):
         text = out.getvalue()
         self.assertIn("bogus", text)                  # the filter, named
         self.assertIn("Visual Studio Code", text)     # what it reports on
+
+    def test_status_survives_a_malformed_release_body(self):
+        real = vscode.latest_release
+        self._status_env([
+            vscode.Editor("code", "Visual Studio Code", "/u/code", True)])
+        self.enterContext(mock.patch.object(
+            vscode, "latest_release",
+            side_effect=lambda: real(
+                fetch=lambda url: b"<html>rate limited</html>")))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status"])
+        self.assertEqual(rc, 0)                    # reports; never crashes
+        self.assertIn("latest unknown", out.getvalue())
 
     def test_status_degrades_when_github_is_unreachable(self):
         editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)

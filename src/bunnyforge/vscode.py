@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -473,30 +474,56 @@ def latest_release(fetch=_fetch) -> Release:
 
     Unauthenticated: 60 requests/hour is ample for a human-driven command,
     but offline or rate-limited must degrade to a clear error the caller
-    can choose to swallow (status) or surface (install)."""
+    can choose to swallow (status) or surface (install).
+
+    A 200 is not a promise of a release object: a proxy's HTML error page
+    and `{"message": "Not Found"}` both arrive that way. Every parse and
+    every key lookup here is therefore a VscodeError, not a traceback.
+    """
     try:
         raw = fetch(RELEASES_URL)
     except OSError as exc:
         raise VscodeError(
             f"couldn't reach GitHub for the latest release ({exc}) — "
             f"check the network and retry") from exc
-    data = json.loads(raw)
-    asset = next((a for a in data.get("assets", [])
-                  if a.get("name", "").endswith(".vsix")), None)
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise VscodeError(
+            f"GitHub's answer for the latest release of {EXTENSION_REPO} "
+            f"is not JSON ({exc}) — retry, or open {RELEASES_URL} in a "
+            f"browser to see what it is saying") from exc
+    if not isinstance(data, dict):
+        raise VscodeError(
+            f"GitHub's answer for the latest release of {EXTENSION_REPO} "
+            f"is not a release object — retry, or open {RELEASES_URL} in "
+            f"a browser to see what it is saying")
+    assets = data.get("assets")
+    asset = next((a for a in assets
+                  if isinstance(a, dict)
+                  and str(a.get("name", "")).endswith(".vsix")),
+                 None) if isinstance(assets, list) else None
     if asset is None:
         raise VscodeError(
             f"release {data.get('tag_name', '?')} of {EXTENSION_REPO} has "
             f"no .vsix asset — report it at "
             f"https://github.com/{EXTENSION_REPO}/issues")
-    digest = asset.get("digest") or ""
-    return Release(
-        version=parse_version(data["tag_name"]),
-        tag=data["tag_name"],
-        vsix_name=asset["name"],
-        url=asset["browser_download_url"],
-        size=asset["size"],
-        sha256=digest.removeprefix("sha256:") if digest.startswith("sha256:")
-               else None)
+    digest = str(asset.get("digest") or "")
+    try:
+        tag = str(data["tag_name"])
+        return Release(
+            version=parse_version(tag),
+            tag=tag,
+            vsix_name=str(asset["name"]),
+            url=str(asset["browser_download_url"]),
+            size=int(asset["size"]),
+            sha256=(digest.removeprefix("sha256:")
+                    if digest.startswith("sha256:") else None))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise VscodeError(
+            f"GitHub's answer for the latest release of {EXTENSION_REPO} "
+            f"is missing or malformed ({exc!r}) — report it at "
+            f"https://github.com/{EXTENSION_REPO}/issues") from exc
 
 
 def cache_dir(platform=sys.platform, environ=os.environ) -> Path:
@@ -519,11 +546,23 @@ def _matches(data: bytes, release: Release) -> bool:
     return hashlib.sha256(data).hexdigest() == release.sha256
 
 
+def _cache_name(release: Release) -> str:
+    """A single safe filename component. Both halves come from the release
+    JSON — untrusted input on its way into a path that gets
+    mkdir(parents=True) — so anything outside the allowed set becomes an
+    underscore. The "-" join means the result can never be "." or ".."."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_",
+                  f"{release.tag}-{release.vsix_name}")
+
+
 def obtain_vsix(release: Release, fetch=_fetch) -> Path:
     """A verified .vsix on disk: the cache if it checks out, else a fresh
-    download — verified BEFORE it lands in the cache, so a truncated or
-    tampered file is never present to be installed later."""
-    dest = cache_dir() / f"{release.tag}-{release.vsix_name}"
+    download — verified BEFORE it lands in the cache, so a truncated file
+    (or, when the release publishes a digest, a tampered one) is never
+    present to be installed later. A release without a digest can only be
+    checked by length, which is why the consent block says which of the
+    two happened."""
+    dest = cache_dir() / _cache_name(release)
     if dest.is_file() and _matches(dest.read_bytes(), release):
         return dest
     try:
@@ -591,11 +630,18 @@ def _ensure(args, update_only: bool) -> int:
         return 0
     vsix = obtain_vsix(release)
     print(f"about to install {EXTENSION_ID} {release.tag}")
-    print(f"  from  https://github.com/{EXTENSION_REPO} (pinned source)")
-    print(f"  file  {vsix}")
-    print(f"  into  {editor.label} ({editor.path})")
+    print(f"  from    https://github.com/{EXTENSION_REPO} (pinned source)")
+    print(f"  file    {vsix}")
+    # Consent has to say WHICH check ran: without a published digest the
+    # verification degrades to length only, and saying nothing would let
+    # that read as tamper-proof.
+    if release.sha256:
+        print(f"  digest  sha256:{release.sha256} (verified)")
+    else:
+        print("  digest  none published by the release — size only")
+    print(f"  into    {editor.label} ({editor.path})")
     if not editor.supported:
-        print("  note  only Visual Studio Code is tested; this editor is "
+        print("  note    only Visual Studio Code is tested; this editor is "
               "offered unsupported and may have bugs")
     if not _confirm("proceed?", args.yes):
         print("cancelled — nothing installed")
