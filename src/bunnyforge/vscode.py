@@ -35,6 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 from typing import NamedTuple
@@ -211,7 +212,8 @@ def normalise_commas(lines: list[str]) -> list[str]:
         out[preceding[-1]] = _drop_comma(out[preceding[-1]])
         indent = _split_indent(out[begin])[0]
         off = region_state(out, begin, end) == "off"
-        out.insert(begin + 1, indent + (OFF_PREFIX if off else "") + ",")
+        separator = indent + (OFF_PREFIX if off else "") + ","
+        out.insert(begin + 1, _with_endings_of([separator], out)[0])
     return out
 
 
@@ -264,6 +266,15 @@ def find_unmanaged_key(lines: list[str],
     return None
 
 
+def _with_endings_of(new: list[str], model: list[str]) -> list[str]:
+    """`new` lines given the line ending `model` uses. Lines read with
+    newline="" keep their own terminator, so inserting package lines (LF)
+    into a CRLF file would leave it half-translated."""
+    if not any(l.endswith("\r") for l in model):
+        return new
+    return [l if l.endswith("\r") else l + "\r" for l in new]
+
+
 def packaged_region_lines() -> list[str]:
     lines = (init.packaged_bytes("vscode/settings.json")
              .decode("utf-8").split("\n"))
@@ -286,7 +297,7 @@ def splice_region(lines: list[str]) -> list[str]:
             f"(no opening or closing brace on a line of its own) — fix or "
             f"remove the file, then re-run")
     opens, _ = bounds
-    region = packaged_region_lines()
+    region = _with_endings_of(packaged_region_lines(), lines)
     return normalise_commas(lines[:opens + 1] + region + lines[opens + 1:])
 
 
@@ -299,9 +310,11 @@ def adopt_key(lines: list[str], key_idx: int) -> list[str]:
     before it with a comma that dangles as soon as `off` runs."""
     end = key_span(lines, key_idx)
     indent = _split_indent(lines[key_idx])[0]
+    begin_line, end_line = _with_endings_of(
+        [indent + MARKER_BEGIN, indent + MARKER_END], lines)
     out = list(lines)
-    out.insert(end + 1, indent + MARKER_END)
-    out.insert(key_idx, indent + MARKER_BEGIN)
+    out.insert(end + 1, end_line)
+    out.insert(key_idx, begin_line)
     return normalise_commas(out)
 
 
@@ -309,8 +322,8 @@ def replace_region(lines: list[str], begin: int, end: int) -> list[str]:
     """The packaged region in place of the current one, commas normalised:
     the packaged region ends `//- },`, which is a dangling comma when the
     region is the object's last (or only) member."""
-    return normalise_commas(
-        lines[:begin] + packaged_region_lines() + lines[end + 1:])
+    region = _with_endings_of(packaged_region_lines(), lines)
+    return normalise_commas(lines[:begin] + region + lines[end + 1:])
 
 
 # ── Editors ─────────────────────────────────────────────────────────────
@@ -699,12 +712,38 @@ def cmd_status(args) -> int:
 # ── Workspace-half subcommands ──────────────────────────────────────────
 
 def _read_lines(path: Path) -> list[str]:
-    return path.read_text(encoding="utf-8").split("\n")
+    # newline="" keeps the file's own line endings inside the strings.
+    # Translating them would rewrite every line of a file this tool
+    # promises to touch only between the markers.
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read().split("\n")
 
 
 def _write_lines(path: Path, lines: list[str]) -> None:
+    """Write through a temp file in the SAME directory, then os.replace.
+
+    A truncating write that dies partway — full disk, SIGINT, crash —
+    would leave the user's hand-edited, hand-commented settings.json
+    empty, and there is no backup. os.replace is atomic only within one
+    filesystem, hence the sibling temp file rather than /tmp.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    fd, name = tempfile.mkstemp(dir=path.parent,
+                                prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write("\n".join(lines))
+        # mkstemp is 0600; the file the user had (or a plain new one)
+        # should not silently change mode.
+        if path.exists():
+            shutil.copymode(path, tmp)
+        else:
+            tmp.chmod(0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _packaged_settings_lines() -> list[str]:

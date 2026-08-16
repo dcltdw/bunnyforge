@@ -881,6 +881,58 @@ class TestOnOff(unittest.TestCase):
         self.assertIn("unbalanced", err)
 
 
+class TestWriting(unittest.TestCase):
+    """The workspace file is hand-edited and hand-commented, and there is
+    no backup: how it is written matters as much as what is written."""
+
+    def test_a_failed_write_leaves_the_original_file_intact(self):
+        # A lone surrogate cannot be encoded as UTF-8, so the write dies
+        # partway — exactly where a full disk or a SIGINT would.
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = tmp / ".vscode" / "settings.json"
+        path.parent.mkdir()
+        original = '{\n  // years of hand-written notes\n  "a": 1\n}\n'
+        path.write_text(original, encoding="utf-8")
+        with self.assertRaises(UnicodeEncodeError):
+            vscode._write_lines(path, ["{", "  \ud800", "}"])
+        self.assertEqual(path.read_text("utf-8"), original)
+        self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
+                         ["settings.json"])        # and no temp litter
+
+    def test_a_crlf_file_keeps_its_crlf_line_endings(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        packaged = (init.packaged_bytes("vscode/settings.json")
+                    .decode("utf-8"))
+        (ws / ".vscode" / "settings.json").write_bytes(
+            packaged.replace("\n", "\r\n").encode("utf-8"))
+        with mock.patch.object(vscode, "_offer_highlight"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        raw = (ws / ".vscode" / "settings.json").read_bytes()
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))   # every LF
+        lines = _settings_of(ws)                             # is a CRLF
+        self.assertEqual(
+            vscode.region_state(lines, *vscode.maybe_region(lines)), "on")
+
+
+    def test_a_spliced_region_takes_the_files_line_endings(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_bytes(
+            b'{\r\n  "editor.rulers": [80]\r\n}\r\n')
+        with mock.patch.object(vscode, "_offer_highlight"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        raw = (ws / ".vscode" / "settings.json").read_bytes()
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        lines = _settings_of(ws)
+        self.assertEqual(
+            vscode.region_state(lines, *vscode.maybe_region(lines)), "on")
+
+
 class TestOnConflict(unittest.TestCase):
     """The duplicate-key hazard: a hand-rolled highlight.regexes outside
     any markers. Never append; ask, recommending adopt (decision 6)."""
