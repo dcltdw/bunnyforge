@@ -554,14 +554,21 @@ def cmd_status(args) -> int:
         except VscodeError:
             editor = editors[0]
         print(f"editor         {editor.label} ({editor.path})")
-        installed = installed_version(editor)
+        try:
+            installed = installed_version(editor)
+            installed_error = None
+        except VscodeError as exc:
+            installed = None
+            installed_error = exc
         try:
             release = latest_release()
             available = f"{_dotted(release.version)} available"
         except VscodeError as exc:
             release = None
             available = f"latest unknown ({exc})"
-        if installed is None:
+        if installed_error is not None:
+            print(f"preview ext    unknown ({installed_error}); {available}")
+        elif installed is None:
             print(f"preview ext    not installed; {available}")
         elif release and installed < release.version:
             print(f"preview ext    {_dotted(installed)} installed; "

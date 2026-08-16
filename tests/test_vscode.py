@@ -537,3 +537,30 @@ class TestStatus(unittest.TestCase):
             rc = vscode.main(["status"])
         self.assertEqual(rc, 0)               # status reports; never fails
         self.assertIn("unknown", out.getvalue())
+
+    def test_status_degrades_when_the_editor_cli_fails(self):
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        self.enterContext(mock.patch.object(
+            vscode, "installed_version",
+            side_effect=vscode.VscodeError("code --list-extensions failed: "
+                                           "permission denied")))
+        self.enterContext(mock.patch.object(vscode, "_run",
+                                            return_value=_proc("")))
+        self.enterContext(mock.patch.object(
+            vscode, "latest_release",
+            return_value=vscode.latest_release(fetch=lambda url: RELEASE_JSON)))
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_WORKSPACE"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(Path, "cwd", return_value=tmp), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status"])
+        self.assertEqual(rc, 0)               # status reports; never fails
+        text = out.getvalue()
+        self.assertEqual(text.count("preview ext"), 1)  # exactly one line
+        self.assertIn("unknown", text)
+        self.assertIn("permission denied", text)
+        self.assertIn("none found", text)     # workspace half still runs
