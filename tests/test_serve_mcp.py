@@ -172,9 +172,6 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(serve_mcp.build_app(server)))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
 class TestTunnelHost(unittest.TestCase):
@@ -211,3 +208,172 @@ class TestTunnelHost(unittest.TestCase):
         # the hostname, which would accept any Host on the public internet.
         self.assertEqual(self._client().post("/mcp", json={}).status_code,
                          421)
+
+
+def _probe_map(**by_path):
+    """A fake HTTP seam: {path -> (status, headers, body)} or an OSError
+    instance to raise. Nothing here touches the network."""
+    def probe(url, method="GET"):
+        from urllib.parse import urlsplit
+        answer = by_path[urlsplit(url).path]
+        if isinstance(answer, OSError):
+            raise answer
+        return answer
+    return probe
+
+
+def _healthy(issuer="https://campaign.example.com", header="www-authenticate"):
+    """What a correctly configured server behind a tunnel answers.
+
+    The header name defaults to LOWERCASE because that is what uvicorn
+    actually puts on the wire. An earlier version of this fixture used the
+    RFC's casing, every test passed, and the real probe still failed --
+    urllib hands back an email.message.Message whose case-insensitivity is
+    lost the moment it becomes a plain dict.
+    """
+    meta_url = f"{issuer}/.well-known/oauth-protected-resource/mcp"
+    return _probe_map(**{
+        "/.well-known/oauth-protected-resource/mcp": (
+            200, {}, b'{"resource": "x"}'),
+        "/.well-known/oauth-authorization-server": (
+            200, {}, ('{"issuer": "%s"}' % issuer).encode()),
+        "/mcp": (401, {header: f'Bearer resource_metadata="{meta_url}"'},
+                 b""),
+    })
+
+
+class TestPreflight(unittest.TestCase):
+    """Issue #51: prove the public URL is connector-ready before claude.ai
+    is involved, so a failed connect stops being one opaque browser error
+    covering four unrelated causes.
+
+    Every probe is injected; no test opens a socket.
+    """
+
+    URL = "https://campaign.example.com"
+
+    def _run(self, probe):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = serve_mcp.main(["--check", self.URL], probe=probe)
+        return rc, out.getvalue()
+
+    def test_a_correctly_configured_server_passes(self):
+        rc, out = self._run(_healthy())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ready", out.lower())
+
+    def test_a_public_host_mismatch_is_named_not_just_reported(self):
+        # 421 has exactly one cause, so the check must say so rather than
+        # leaving the operator to work it out.
+        probe = _healthy()
+        broken = _probe_map(**{
+            "/.well-known/oauth-protected-resource/mcp": (421, {}, b""),
+            "/.well-known/oauth-authorization-server": (421, {}, b""),
+            "/mcp": (421, {}, b""),
+        })
+        rc, out = self._run(broken)
+        self.assertEqual(rc, 1)
+        self.assertIn("--public-host", out)
+
+    def test_an_issuer_pointing_at_localhost_is_caught(self):
+        # The documents serve fine; every endpoint in them is unreachable.
+        rc, out = self._run(_healthy(issuer="http://127.0.0.1:8765"))
+        self.assertEqual(rc, 1)
+        self.assertIn("127.0.0.1", out)
+        self.assertIn("issuer", out.lower())
+
+    def test_an_open_server_is_reported_as_no_auth(self):
+        probe = _probe_map(**{
+            "/.well-known/oauth-protected-resource/mcp": (404, {}, b""),
+            "/.well-known/oauth-authorization-server": (404, {}, b""),
+            "/mcp": (200, {}, b"{}"),
+        })
+        rc, out = self._run(probe)
+        self.assertEqual(rc, 1)
+        self.assertIn("--no-auth", out)
+
+    def test_an_unreachable_host_says_so(self):
+        probe = _probe_map(**{
+            "/.well-known/oauth-protected-resource/mcp":
+                OSError("nodename nor servname provided"),
+            "/.well-known/oauth-authorization-server": (200, {}, b"{}"),
+            "/mcp": (401, {}, b""),
+        })
+        rc, out = self._run(probe)
+        self.assertEqual(rc, 1)
+        self.assertIn("could not reach", out.lower())
+
+    def test_a_401_without_a_metadata_pointer_is_flagged(self):
+        # The connector needs that pointer to start OAuth at all.
+        probe = _probe_map(**{
+            "/.well-known/oauth-protected-resource/mcp": (200, {}, b"{}"),
+            "/.well-known/oauth-authorization-server": (
+                200, {}, b'{"issuer": "https://campaign.example.com"}'),
+            "/mcp": (401, {}, b""),
+        })
+        rc, out = self._run(probe)
+        self.assertEqual(rc, 1)
+        self.assertIn("resource_metadata", out)
+
+    def test_check_needs_no_workspace(self):
+        # It inspects a remote server; requiring a campaign workspace to
+        # check a URL would be wrong, and the operator may well run it
+        # from another directory entirely.
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.object(Path, "cwd", return_value=tmp):
+            rc, _ = self._run(_healthy())
+        self.assertEqual(rc, 0)
+
+    def test_the_metadata_pointer_is_found_whatever_the_header_casing(self):
+        # Found by smoking the real probe: uvicorn sends
+        # `www-authenticate`, urllib's Message is case-insensitive, and
+        # dict(Message) is not -- so the RFC-cased lookup missed it and
+        # the check told a correctly configured server it was broken.
+        for casing in ("www-authenticate", "WWW-Authenticate",
+                       "Www-Authenticate"):
+            with self.subTest(header=casing):
+                rc, out = self._run(_healthy(header=casing))
+                self.assertEqual(rc, 0, out)
+
+    def test_no_auth_is_diagnosed_once_not_three_times(self):
+        # One cause should read as one problem. Three lines for one
+        # misconfiguration buries the sentence that names the fix.
+        probe = _probe_map(**{
+            "/.well-known/oauth-protected-resource/mcp": (404, {}, b""),
+            "/.well-known/oauth-authorization-server": (404, {}, b"<html>"),
+            "/mcp": (400, {}, b""),
+        })
+        rc, out = self._run(probe)
+        self.assertEqual(rc, 1)
+        # The marker, not the bare word: the closing summary says "fix the
+        # FAIL lines above", which is guidance rather than a finding.
+        self.assertEqual(out.count("[FAIL]"), 1, out)
+        self.assertIn("--no-auth", out)
+
+
+    def test_a_tunnel_with_no_server_behind_it_is_not_blamed_on_auth(self):
+        # Found live: the tunnel answered 502 because nothing was
+        # listening on the bind port, and the check told the operator to
+        # restart with --auth-key. Sending someone to fix auth when the
+        # server is not running is precisely the misdiagnosis this
+        # command exists to prevent.
+        for status in (502, 503, 504):
+            with self.subTest(status=status):
+                probe = _probe_map(**{
+                    "/.well-known/oauth-protected-resource/mcp":
+                        (status, {}, b""),
+                    "/.well-known/oauth-authorization-server":
+                        (status, {}, b""),
+                    "/mcp": (status, {}, b""),
+                })
+                rc, out = self._run(probe)
+                self.assertEqual(rc, 1)
+                self.assertEqual(out.count("[FAIL]"), 1, out)
+                self.assertNotIn("--auth-key", out)
+                self.assertNotIn("--no-auth", out)
+                self.assertIn("serve-mcp", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

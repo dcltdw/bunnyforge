@@ -36,6 +36,23 @@ and update the connector URL in claude.ai each time.
 Local testing needs no tunnel: `--no-auth` (unauthenticated, loud
 warning) or `--auth-key` with the default localhost issuer.
 
+## Check it before adding the connector
+
+With the server and the tunnel both running, from anywhere:
+
+    bunnyforge serve-mcp --check https://<public-host>
+
+It probes the public URL the way a connector will, reports one line per
+finding, and exits non-zero if anything is wrong. It needs no workspace
+and no `[mcp]` extra — this is plain HTTP, so it runs from your ordinary
+Python while the server runs in whatever environment has the SDK.
+
+Worth doing first: a connector that cannot connect gives you one opaque
+error in the browser, and it looks the same whether the tunnel is not
+routing, `--public-host` does not match the hostname, the advertised OAuth
+issuer points at `127.0.0.1`, or the server was started `--no-auth`. The
+check separates those from the one cause worth your attention.
+
 ## Add the connector in claude.ai
 
 Settings → Connectors → Add custom connector:

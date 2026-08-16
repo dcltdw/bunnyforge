@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import NamedTuple
 
 from bunnyforge import _config
 from bunnyforge._config import ConfigError, WorkspaceError
@@ -161,7 +162,174 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-direct-edits", action="store_true",
                         help="also expose write_entity, which edits "
                              "canonical files in place and commits each edit")
+    parser.add_argument("--check", metavar="URL",
+                        help="do not serve: probe an already-running "
+                             "server at URL (e.g. https://your.tunnel.host) "
+                             "and report whether it is ready for a "
+                             "claude.ai connector")
     return parser
+
+
+class Check(NamedTuple):
+    ok: bool
+    label: str
+    detail: str      # on failure, what to DO about it -- not the symptom
+
+
+PROTECTED_PATH = "/.well-known/oauth-protected-resource/mcp"
+METADATA_PATH = "/.well-known/oauth-authorization-server"
+
+
+def _probe(url: str, method: str = "GET"):
+    """One HTTP request, returning (status, headers, body).
+
+    Stdlib only and no `mcp` extra: this is plain HTTP, so the check runs
+    from an ordinary interpreter while the server runs in whatever venv
+    has the SDK. Injected everywhere so no test opens a socket.
+    """
+    import urllib.error
+    import urllib.request
+    request = urllib.request.Request(
+        url, method=method, headers={"User-Agent": "bunnyforge"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, dict(response.headers), response.read()
+    except urllib.error.HTTPError as exc:
+        # A 401 or 421 is an answer, not a failure -- it is most of what
+        # this check reads.
+        return exc.code, dict(exc.headers or {}), exc.read()
+
+
+def _header(headers, name: str) -> str:
+    """Case-insensitive header lookup.
+
+    HTTP header names are case-insensitive and uvicorn sends them
+    lowercased, but urllib hands back an email.message.Message whose
+    case-insensitivity is lost the moment it becomes a plain dict. Looking
+    up the RFC's casing therefore missed the real header and told a
+    correctly configured server it was broken -- caught by smoking the
+    live probe, not by the tests, which had used the RFC casing too.
+    """
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if key.lower() == wanted:
+            return str(value)
+    return ""
+
+
+def preflight(base_url: str, probe=_probe) -> list[Check]:
+    """Probe a running server the way a connector will, in that order.
+
+    Every failure names the fix rather than the symptom: the value here is
+    entirely diagnostic, and a check that only says "failed" leaves the
+    operator exactly where they started -- one browser error covering four
+    unrelated causes (#51).
+    """
+    import json as _json
+    base = base_url.rstrip("/").removesuffix("/mcp")
+    checks: list[Check] = []
+
+    def get(path, method="GET"):
+        return probe(f"{base}{path}", method)
+
+    try:
+        status, _, _ = get(PROTECTED_PATH)
+    except OSError as exc:
+        return [Check(False, "reachable",
+                      f"could not reach {base} ({exc}) — is the tunnel "
+                      f"running, and pointed at the bind port?")]
+    if status == 421:
+        return [Check(False, "host accepted",
+                      f"the server refused the hostname in {base} with 421 "
+                      f"— restart it with --public-host set to exactly that "
+                      f"hostname (no scheme, no port)")]
+    if status >= 500:
+        # The tunnel answered; whatever it points at did not. Found live:
+        # a 502 was previously read as "no OAuth routes" and sent the
+        # operator off to fix auth on a server that was not running.
+        return [Check(False, "origin reachable",
+                      f"{base} answered {status} — the tunnel is up but "
+                      f"nothing is serving behind it; start `bunnyforge "
+                      f"serve-mcp` on the port the tunnel points at, then "
+                      f"re-run this check")]
+    if status == 404:
+        # One cause, one line. Reporting it three times (no routes, no
+        # metadata, /mcp open) buries the sentence that names the fix.
+        return [Check(False, "oauth discovery",
+                      "no OAuth routes — the server is running --no-auth, "
+                      "which cannot serve a connector; restart it with "
+                      "--auth-key")]
+    checks.append(Check(status == 200, "oauth discovery",
+                        f"expected 200 from {PROTECTED_PATH}, got {status}"
+                        if status != 200 else
+                        f"{PROTECTED_PATH} answers"))
+
+    issuer = ""
+    try:
+        status, _, body = get(METADATA_PATH)
+    except OSError as exc:
+        status = 0
+        checks.append(Check(False, "issuer",
+                            f"could not reach {METADATA_PATH} ({exc})"))
+    else:
+        try:
+            issuer = _json.loads(body or b"{}").get("issuer", "").rstrip("/")
+        except ValueError:
+            # Keep the real status: reporting "got 0" for a body that
+            # simply was not JSON sent the reader hunting the wrong layer.
+            issuer = ""
+    if status == 200 and issuer == base:
+        checks.append(Check(True, "issuer", f"advertised as {issuer}"))
+    elif status == 200:
+        checks.append(Check(
+            False, "issuer",
+            f"the server advertises its issuer as {issuer or '(none)'}, not "
+            f"{base} — a connector follows that and will try to reach it; "
+            f"restart with --public-host set to this hostname"))
+    elif status != 404:
+        checks.append(Check(False, "issuer",
+                            f"expected 200 from {METADATA_PATH}, got "
+                            f"{status}"))
+
+    try:
+        status, headers, _ = get("/mcp", "POST")
+    except OSError as exc:
+        checks.append(Check(False, "auth", f"could not reach {base}/mcp "
+                                           f"({exc})"))
+        return checks
+    www = _header(headers, "WWW-Authenticate")
+    if status == 401 and "resource_metadata" in www:
+        checks.append(Check(True, "auth", "/mcp challenges unauthenticated "
+                                          "requests and points at its "
+                                          "metadata"))
+    elif status == 401:
+        checks.append(Check(
+            False, "auth",
+            "/mcp returns 401 but its WWW-Authenticate carries no "
+            "resource_metadata pointer, so a connector cannot discover "
+            "where to start OAuth"))
+    else:
+        checks.append(Check(
+            False, "auth",
+            f"/mcp answered {status} without credentials — the server is "
+            f"running --no-auth; a connector needs OAuth, so restart it "
+            f"with --auth-key"))
+    return checks
+
+
+def report(checks: list[Check], out=None) -> int:
+    """Print one line per check; 0 only when every one passed."""
+    stream = sys.stdout if out is None else out
+    for check in checks:
+        mark = "ok  " if check.ok else "FAIL"
+        print(f"  [{mark}] {check.label}: {check.detail}", file=stream)
+    if all(c.ok for c in checks):
+        print("\nready for a claude.ai custom connector — add it with both "
+              "OAuth fields blank", file=stream)
+        return 0
+    print("\nnot ready: fix the FAIL lines above, then re-run this check",
+          file=stream)
+    return 1
 
 
 def build_app(server, public_host: str | None = None):
@@ -189,8 +357,14 @@ def build_app(server, public_host: str | None = None):
             allowed_origins=[f"https://{public_host}"]))
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, probe=_probe) -> int:
     args = build_parser().parse_args(argv)
+
+    # --check inspects a REMOTE server, so it short-circuits before
+    # workspace resolution: requiring a campaign workspace to check a URL
+    # would be wrong, and the operator is often somewhere else entirely.
+    if args.check:
+        return report(preflight(args.check, probe=probe))
 
     try:
         ws = _config.resolve_workspace(args.workspace)
