@@ -65,3 +65,63 @@ OFF_PREFIX = "//- "
 
 SETTINGS_REL = ".vscode/settings.json"
 TIMEOUT = 10  # seconds, every network call
+
+
+# ── The marker-region engine ────────────────────────────────────────────
+# Pure text -> text. State is always DERIVED from the region's content,
+# never stored anywhere it could disagree with reality.
+
+def _split_indent(line: str) -> tuple[str, str]:
+    body = line.lstrip(" \t")
+    return line[:len(line) - len(body)], body
+
+
+def maybe_region(lines: list[str]) -> tuple[int, int] | None:
+    """The (begin, end) marker line indices, or None when neither marker
+    exists (the create-the-block case). A lone, duplicated, or reversed
+    marker raises: rewriting between markers that cannot be trusted would
+    destroy a file the user hand-edited, so refuse and say why.
+    """
+    begins = [i for i, l in enumerate(lines) if l.strip() == MARKER_BEGIN]
+    ends = [i for i, l in enumerate(lines) if l.strip() == MARKER_END]
+    if not begins and not ends:
+        return None
+    if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
+        raise VscodeError(
+            f"the managed markers in {SETTINGS_REL} are unbalanced "
+            f"({len(begins)} begin, {len(ends)} end) — refusing to guess "
+            f"which lines are managed; restore the single marker pair by "
+            f"hand, then re-run")
+    return begins[0], ends[0]
+
+
+def region_state(lines: list[str], begin: int, end: int) -> str:
+    """"off" outranks "on": a region holding both disabled and live lines
+    was hand-mangled, and reporting it off lets `on` heal it (enabling
+    strips every prefix, converging the region to fully live)."""
+    live = False
+    for line in lines[begin + 1:end]:
+        body = line.strip()
+        if body.startswith(OFF_PREFIX):
+            return "off"
+        if body and not body.startswith("//"):
+            live = True
+    return "on" if live else "empty"
+
+
+def enable_region(lines: list[str], begin: int, end: int) -> list[str]:
+    out = list(lines)
+    for i in range(begin + 1, end):
+        indent, body = _split_indent(out[i])
+        if body.startswith(OFF_PREFIX):
+            out[i] = indent + body[len(OFF_PREFIX):]
+    return out
+
+
+def disable_region(lines: list[str], begin: int, end: int) -> list[str]:
+    out = list(lines)
+    for i in range(begin + 1, end):
+        indent, body = _split_indent(out[i])
+        if body and not body.startswith("//"):
+            out[i] = indent + OFF_PREFIX + body
+    return out
