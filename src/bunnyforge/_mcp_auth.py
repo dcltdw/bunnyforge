@@ -140,3 +140,125 @@ class SingleUserOAuthProvider(
             self._refresh = {t: r for t, r in self._refresh.items()
                              if r.client_id != evicted}
         self._save()
+
+    # -- consent -----------------------------------------------------------
+    # authorize() is called by the SDK's /authorize handler, which 302s the
+    # GM's browser to whatever URL we return. We park the request under an
+    # unguessable transaction id and send the browser to our consent page;
+    # grant() is the consent POST handler redeeming it.
+
+    async def authorize(self, client: OAuthClientInformationFull,
+                        params: AuthorizationParams) -> str:
+        self._prune()
+        txn = secrets.token_urlsafe(32)
+        self._txns[txn] = _Txn(params=params, client_id=client.client_id,
+                               expires_at=time.time() + TXN_TTL)
+        return f"{self.issuer_url}/consent?txn={txn}"
+
+    def check_key(self, submitted: str) -> bool:
+        return hmac.compare_digest(submitted.encode(), self._gm_key.encode())
+
+    def consent_context(self, txn: str) -> dict | None:
+        t = self._txns.get(txn)
+        if t is None or t.expires_at < time.time():
+            self._txns.pop(txn, None)
+            return None
+        client = self._clients.get(t.client_id)
+        name = (client.client_name if client else None) or t.client_id
+        return {"client_name": name}
+
+    def grant(self, txn: str) -> str | None:
+        t = self._txns.pop(txn, None)
+        if t is None or t.expires_at < time.time():
+            return None
+        code = secrets.token_urlsafe(32)
+        p = t.params
+        self._codes[code] = AuthorizationCode(
+            code=code, scopes=p.scopes or [],
+            expires_at=time.time() + CODE_TTL,
+            client_id=t.client_id, code_challenge=p.code_challenge,
+            redirect_uri=p.redirect_uri,
+            redirect_uri_provided_explicitly=p.redirect_uri_provided_explicitly,
+            resource=p.resource)
+        return construct_redirect_uri(str(p.redirect_uri),
+                                      code=code, state=p.state)
+
+    def _prune(self) -> None:
+        now = time.time()
+        self._txns = {k: v for k, v in self._txns.items()
+                      if v.expires_at > now}
+        self._codes = {k: v for k, v in self._codes.items()
+                       if v.expires_at > now}
+
+    # -- codes and tokens (called by the SDK's /token handler; PKCE is
+    # verified there, not here) ------------------------------------------
+
+    async def load_authorization_code(
+            self, client: OAuthClientInformationFull,
+            authorization_code: str) -> AuthorizationCode | None:
+        ac = self._codes.get(authorization_code)
+        if ac is None or ac.client_id != client.client_id:
+            return None
+        if ac.expires_at < time.time():
+            del self._codes[authorization_code]
+            return None
+        return ac
+
+    async def exchange_authorization_code(
+            self, client: OAuthClientInformationFull,
+            authorization_code: AuthorizationCode) -> OAuthToken:
+        if self._codes.pop(authorization_code.code, None) is None:
+            raise TokenError("invalid_grant",
+                             "authorization code already used")
+        return self._issue(client.client_id, authorization_code.scopes)
+
+    async def load_refresh_token(
+            self, client: OAuthClientInformationFull,
+            refresh_token: str) -> RefreshToken | None:
+        rt = self._refresh.get(refresh_token)
+        if rt is None or rt.client_id != client.client_id:
+            return None
+        if rt.expires_at and rt.expires_at < time.time():
+            del self._refresh[refresh_token]
+            self._save()
+            return None
+        return rt
+
+    async def exchange_refresh_token(
+            self, client: OAuthClientInformationFull,
+            refresh_token: RefreshToken, scopes: list[str]) -> OAuthToken:
+        if self._refresh.pop(refresh_token.token, None) is None:
+            raise TokenError("invalid_grant", "refresh token already used")
+        return self._issue(client.client_id,
+                           scopes or refresh_token.scopes)
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        at = self._access.get(token)
+        if at is None:
+            return None
+        if at.expires_at and at.expires_at < time.time():
+            del self._access[token]
+            return None
+        return at
+
+    async def revoke_token(
+            self, token: AccessToken | RefreshToken) -> None:
+        self._access.pop(token.token, None)
+        self._refresh.pop(token.token, None)
+        self._save()
+
+    def _issue(self, client_id: str, scopes: list[str]) -> OAuthToken:
+        now = time.time()
+        access = secrets.token_urlsafe(32)
+        refresh = secrets.token_urlsafe(32)
+        self._access[access] = AccessToken(
+            token=access, client_id=client_id, scopes=scopes,
+            expires_at=int(now + ACCESS_TTL))
+        self._refresh[refresh] = RefreshToken(
+            token=refresh, client_id=client_id, scopes=scopes,
+            expires_at=int(now + REFRESH_TTL))
+        self._save()
+        return OAuthToken(access_token=access, token_type="Bearer",
+                          expires_in=ACCESS_TTL,
+                          scope=" ".join(scopes) or None,
+                          refresh_token=refresh)
