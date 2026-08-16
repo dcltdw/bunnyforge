@@ -164,6 +164,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_app(server, public_host: str | None = None):
+    """The ASGI app, told which hostname it is served as (#46).
+
+    The SDK enables DNS-rebinding protection by default and, given no
+    settings, allows only the bind address. Through a tunnel the `Host`
+    header carries the public hostname instead, so every request was
+    refused with `421 Invalid Host header` before it reached auth -- and
+    a tunnel is the only deployment the design describes.
+
+    The contract is "declare your hostname", not "turn the guard off":
+    protection stays ENABLED and only the named host is allowed, so an
+    undeclared Host is still refused. Without a public host the safe
+    localhost-only default is left exactly as it was.
+    """
+    if not public_host:
+        return server.streamable_http_app(stateless_http=True)
+    from mcp.server.transport_security import TransportSecuritySettings
+    return server.streamable_http_app(
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[public_host],
+            allowed_origins=[f"https://{public_host}"]))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -184,8 +209,8 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
-    # Issue #46 will also plumb --public-host into transport_security;
-    # here it only names the OAuth issuer.
+    # --public-host does double duty: it names the OAuth issuer, and it
+    # declares the hostname to DNS-rebinding protection in build_app (#46).
     issuer = (f"https://{args.public_host}" if args.public_host
               else f"http://127.0.0.1:{args.port}")
 
@@ -206,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         print(_INSTALL_HINT, file=sys.stderr)
         return 1
 
-    app = server.streamable_http_app(stateless_http=True)
+    app = build_app(server, public_host=args.public_host)
     if not key:
         print("WARNING: serving with no authentication", file=sys.stderr)
 

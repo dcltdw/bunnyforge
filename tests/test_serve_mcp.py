@@ -175,3 +175,40 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
+class TestTunnelHost(unittest.TestCase):
+    """Issue #46: the only deployment the design describes is through a
+    tunnel, and through one the `Host` header carries the public hostname
+    rather than the bind address. The SDK enables DNS-rebinding protection
+    by default and, given no settings, allows only the bind address -- so
+    every tunnelled request was rejected with 421 before it reached auth.
+
+    The contract is "declare your hostname", not "turn the guard off":
+    an undeclared host must still be refused.
+    """
+
+    HOST = "campaign.example.com"
+
+    def _client(self, **kwargs):
+        from starlette.testclient import TestClient
+        server = serve_mcp.build_server(scaffold(self))
+        app = serve_mcp.build_app(server, **kwargs)
+        return self.enterContext(
+            TestClient(app, base_url=f"https://{self.HOST}",
+                       follow_redirects=False))
+
+    def test_a_declared_public_host_is_served(self):
+        response = self._client(public_host=self.HOST).post("/mcp", json={})
+        self.assertNotEqual(
+            response.status_code, 421,
+            "a tunnel hostname passed as --public-host was still refused by "
+            "DNS-rebinding protection")
+
+    def test_an_undeclared_host_is_still_refused(self):
+        # The guard stays ON. If this ever passes, the fix has been
+        # implemented by disabling the protection rather than declaring
+        # the hostname, which would accept any Host on the public internet.
+        self.assertEqual(self._client().post("/mcp", json={}).status_code,
+                         421)
