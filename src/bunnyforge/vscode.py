@@ -131,6 +131,15 @@ def disable_region(lines: list[str], begin: int, end: int) -> list[str]:
 
 # ── Structural edits: create, adopt, replace ────────────────────────────
 
+def _with_endings_of(new: list[str], model: list[str]) -> list[str]:
+    """`new` lines given the line ending `model` uses. Lines read with
+    newline="" keep their own terminator, so inserting package lines (LF)
+    into a CRLF file would leave it half-translated."""
+    if not any(l.endswith("\r") for l in model):
+        return new
+    return [l if l.endswith("\r") else l + "\r" for l in new]
+
+
 def _is_live(line: str) -> bool:
     """A line carrying JSON the parser sees — not blank, not a comment."""
     body = line.strip()
@@ -138,8 +147,8 @@ def _is_live(line: str) -> bool:
 
 
 def _drop_comma(line: str) -> str:
-    """The same line without its trailing comma, indent, OFF_PREFIX and
-    any line-ending kept exactly as they were."""
+    """The line with its trailing comma removed; indent, OFF_PREFIX and
+    any line ending kept exactly as they were."""
     indent, body = _split_indent(line)
     prefix = ""
     if body.startswith(OFF_PREFIX):
@@ -198,7 +207,7 @@ def normalise_commas(lines: list[str]) -> list[str]:
         return lines
     begin, end = region
     opens, close = bounds
-    if not opens < begin or not end < close:
+    if not opens < begin < end < close:
         return lines
     out = list(lines)
     following = [i for i in range(end + 1, close) if _is_live(out[i])]
@@ -265,15 +274,6 @@ def find_unmanaged_key(lines: list[str],
         if line.strip().startswith('"highlight.regexes"'):
             return i
     return None
-
-
-def _with_endings_of(new: list[str], model: list[str]) -> list[str]:
-    """`new` lines given the line ending `model` uses. Lines read with
-    newline="" keep their own terminator, so inserting package lines (LF)
-    into a CRLF file would leave it half-translated."""
-    if not any(l.endswith("\r") for l in model):
-        return new
-    return [l if l.endswith("\r") else l + "\r" for l in new]
 
 
 def packaged_region_lines() -> list[str]:
@@ -677,8 +677,13 @@ def cmd_uninstall(args) -> int:
 
 
 def _has_extension(editor: Editor, extension_id: str) -> bool:
+    # Case-insensitively, like installed_version: editors print an
+    # extension's publisher and name in the casing the marketplace has,
+    # and a case-sensitive miss re-offers an install on every run.
     proc = _run([editor.path, "--list-extensions"])
-    return proc.returncode == 0 and extension_id in proc.stdout.split()
+    return (proc.returncode == 0
+            and extension_id.lower() in
+            [name.lower() for name in proc.stdout.split()])
 
 
 def cmd_status(args) -> int:
@@ -935,9 +940,13 @@ def cmd_off(args) -> int:
 
 
 def cmd_setup(args) -> int:
-    rc = _ensure(args, update_only=False)
-    if rc != 0:
-        return rc
+    # A declined install is the one non-zero _ensure returns (everything
+    # else raises). The sideloaded preview extension is optional and
+    # init.py sends every new user here, so declining it must not cost
+    # them the workspace half — or exit 1.
+    if _ensure(args, update_only=False) != 0:
+        print("skipping the preview extension — carrying on with the "
+              "source-view colouring")
     try:
         _config.resolve_workspace(args.workspace)
     except (_config.ConfigError, _workspace.WorkspaceError):

@@ -408,6 +408,16 @@ class TestVersions(unittest.TestCase):
         with mock.patch.object(vscode, "_run", return_value=_proc("a@1\n")):
             self.assertIsNone(vscode.installed_version(editor))
 
+    def test_has_extension_matches_however_the_listing_cases_it(self):
+        # installed_version already lowercases; the two lookups must not
+        # disagree, or `on` re-offers an extension that is already there.
+        editor = vscode.Editor("code", "VS Code", "/u/code", True)
+        listing = "Other.Thing\nFabioSpampinato.vscode-highlight\n"
+        with mock.patch.object(vscode, "_run", return_value=_proc(listing)):
+            self.assertTrue(
+                vscode._has_extension(editor, vscode.HIGHLIGHT_ID))
+            self.assertFalse(vscode._has_extension(editor, "no.such"))
+
     def test_installed_version_surfaces_a_failing_cli(self):
         editor = vscode.Editor("code", "VS Code", "/u/code", True)
         with mock.patch.object(vscode, "_run",
@@ -1112,6 +1122,24 @@ class TestOfferHighlight(unittest.TestCase):
         self.assertEqual(vscode.region_state(
             lines, *vscode.maybe_region(lines)), "on")
 
+    def test_an_already_installed_extension_is_not_re_offered(self):
+        ws = _ws(self)
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        run = self.enterContext(mock.patch.object(
+            vscode, "_run",
+            return_value=_proc("FabioSpampinato.vscode-highlight\n")))
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=True))
+        self.enterContext(mock.patch.object(
+            vscode, "_ask", side_effect=AssertionError("re-offered")))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        for call in run.call_args_list:
+            self.assertNotIn("--install-extension", call.args[0])
+
     def test_non_interactive_on_prints_a_hint_instead(self):
         ws = _ws(self)
         editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
@@ -1140,6 +1168,23 @@ class TestSetup(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             rc = vscode.main(["setup", "--workspace", str(ws), "--yes"])
         self.assertEqual(rc, 0)
+        self.assertTrue((ws / ".vscode" / "settings.json").is_file())
+
+    def test_setup_carries_on_when_the_install_is_declined(self):
+        # The sideloaded preview extension is optional; declining it must
+        # not cost the user the workspace half — `bunnyforge init` sends
+        # every new user here.
+        ws = _ws(self)
+        _machine_env(self)
+        self.enterContext(mock.patch.object(vscode, "_offer_highlight"))
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=True))
+        self.enterContext(mock.patch.object(
+            vscode, "_ask", side_effect=["n", "y"]))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["setup", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        self.assertIn("skipping the preview extension", out.getvalue())
         self.assertTrue((ws / ".vscode" / "settings.json").is_file())
 
     def test_setup_without_a_workspace_still_installs(self):
