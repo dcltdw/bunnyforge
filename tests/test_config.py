@@ -246,6 +246,26 @@ class TestConfigLoad(unittest.TestCase):
             _config.load(cfg)
         self.assertIn("must be a table of strings", str(ctx.exception))
 
+    def test_staging_dir_defaults_to_extract_inbound(self):
+        # Where material written from outside the workspace lands to await
+        # extraction. The default matches the existing convention, and is
+        # already in the default exclude_dirs -- staged drafts are meant to
+        # be invisible to every walk until a human promotes them.
+        cfg = _config.load(self._ws(MINIMAL))
+        self.assertEqual(cfg.staging_dir, "_ExtractInbound")
+        self.assertIn(cfg.staging_dir, cfg.exclude_dirs)
+
+    def test_staging_dir_honours_explicit_override(self):
+        cfg = _config.load(self._ws(
+            MINIMAL + '\n[workspace]\nstaging_dir = "_Inbox"\n'))
+        self.assertEqual(cfg.staging_dir, "_Inbox")
+
+    def test_staging_dir_wrong_type_raises(self):
+        with self.assertRaises(_config.ConfigError) as ctx:
+            _config.load(self._ws(
+                MINIMAL + '\n[workspace]\nstaging_dir = ["x"]\n'))
+        self.assertIn("staging_dir", str(ctx.exception))
+
 
 class TestWorkspace(unittest.TestCase):
     """Workspace bundles a root with the config loaded from it, so callers

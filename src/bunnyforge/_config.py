@@ -35,7 +35,7 @@ Config = namedtuple(
     "Config",
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
-    "briefs_dir sheets_dir perceptions_dir type_dirs wiki_url "
+    "briefs_dir sheets_dir perceptions_dir type_dirs staging_dir wiki_url "
     "wiki_install_root accepted snapshot_max_age_days fetch_command",
     # wiki_url and wiki_install_root: [wiki] is entirely optional, so a
     # workspace using neither RPC nor the `wiki` review suite leaves both
@@ -118,6 +118,10 @@ _DEFAULTS = {
                   "style-guide.md", "tickets.md"],
     "exclude_dirs": ["_Ignore", "_Archive", "_ExtractInbound", "_Templates",
                      "Sheets", "Reviews", "docs", "scripts", "tests"],
+    # Where material authored outside the workspace lands to await
+    # extraction. Deliberately one of exclude_dirs above: a staged draft is
+    # not content until a human promotes it, so nothing walks it.
+    "staging_dir": "_ExtractInbound",
     "briefs_dir": "Briefs",
     "sheets_dir": "Sheets",
     "perceptions_dir": "Perceptions",
@@ -327,6 +331,7 @@ def load(workspace: Path) -> Config:
         sheets_dir=_str(ws, "sheets_dir"),
         perceptions_dir=_str(ws, "perceptions_dir"),
         type_dirs=_type_dirs(ws),
+        staging_dir=_str(ws, "staging_dir"),
         wiki_url=wiki_url,
         wiki_install_root=wiki_install_root,
         accepted=accepted,
