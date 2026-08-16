@@ -27,6 +27,7 @@ import os
 import secrets
 import sys
 import time
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -132,6 +133,14 @@ class SingleUserOAuthProvider(
     async def register_client(
             self, client_info: OAuthClientInformationFull) -> None:
         self._clients[client_info.client_id] = client_info
+        # /register has no auth, so this cap is the only thing standing
+        # between an anonymous caller and unbounded memory growth. The
+        # trade it accepts: enough registration spam evicts the oldest
+        # client -- ordinarily claude.ai's -- along with its tokens,
+        # forcing the GM to click through consent again, and sustained
+        # spam can keep doing that indefinitely. Still the right trade;
+        # RFC 7591 mandates public registration, so there is no way to
+        # tell a legitimate re-registration from an attacker's here.
         while len(self._clients) > MAX_CLIENTS:
             evicted = next(iter(self._clients))
             del self._clients[evicted]
@@ -165,7 +174,12 @@ class SingleUserOAuthProvider(
             return None
         client = self._clients.get(t.client_id)
         name = (client.client_name if client else None) or t.client_id
-        return {"client_name": name}
+        # /register is public, so client_name alone can't be trusted -- an
+        # attacker can register a client called "Claude" with their own
+        # redirect_uri and mail the GM the resulting consent link. Showing
+        # the redirect target's host lets the GM notice it isn't localhost.
+        redirect_host = urllib.parse.urlsplit(str(t.params.redirect_uri)).netloc
+        return {"client_name": name, "redirect_host": redirect_host}
 
     def grant(self, txn: str) -> str | None:
         t = self._txns.pop(txn, None)
@@ -269,6 +283,11 @@ class SingleUserOAuthProvider(
 _CONSENT_PAGE = """<!doctype html>
 <title>bunnyforge — authorize access</title>
 <h1>Authorize {client} to access campaign “{campaign}”?</h1>
+<p>If you authorize, the access code will be sent to
+<strong>{redirect_host}</strong>. That should be <code>localhost</code> if
+you got here by clicking Connect in claude.ai; if it names some other
+site, do not enter your key — stop and start the connection over from
+claude.ai instead.</p>
 {error}<form method="post" action="/consent">
   <input type="hidden" name="txn" value="{txn}">
   <label>GM key: <input type="password" name="key" autofocus></label>
@@ -291,10 +310,12 @@ def consent_endpoint(provider: SingleUserOAuthProvider, campaign: str):
             "Retry the connection from claude.ai.",
             status_code=400, headers=no_store)
 
-    def page(txn: str, client_name: str, error: str = "") -> HTMLResponse:
+    def page(txn: str, client_name: str, redirect_host: str,
+             error: str = "") -> HTMLResponse:
         body = _CONSENT_PAGE.format(
             client=html.escape(client_name),
             campaign=html.escape(campaign),
+            redirect_host=html.escape(redirect_host),
             txn=html.escape(txn),
             error=f"<p><strong>{error}</strong></p>\n" if error else "")
         return HTMLResponse(body, headers=no_store)
@@ -305,7 +326,7 @@ def consent_endpoint(provider: SingleUserOAuthProvider, campaign: str):
             ctx = provider.consent_context(txn)
             if ctx is None:
                 return dead_txn()
-            return page(txn, ctx["client_name"])
+            return page(txn, ctx["client_name"], ctx["redirect_host"])
         form = await request.form()
         txn = str(form.get("txn", ""))
         ctx = provider.consent_context(txn)
@@ -313,7 +334,8 @@ def consent_endpoint(provider: SingleUserOAuthProvider, campaign: str):
             return dead_txn()
         if not provider.check_key(str(form.get("key", ""))):
             await anyio.sleep(_KEY_DELAY)
-            return page(txn, ctx["client_name"], "Wrong key — try again.")
+            return page(txn, ctx["client_name"], ctx["redirect_host"],
+                       "Wrong key — try again.")
         url = provider.grant(txn)
         if url is None:
             return dead_txn()

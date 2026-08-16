@@ -119,8 +119,9 @@ class TestConsentAndTokens(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             url.startswith("http://127.0.0.1:8000/consent?txn="), url)
         txn = url.split("txn=")[1]
-        self.assertEqual(self.provider.consent_context(txn),
-                         {"client_name": "Claude"})
+        self.assertEqual(
+            self.provider.consent_context(txn),
+            {"client_name": "Claude", "redirect_host": "localhost:9999"})
 
     async def test_consent_context_unknown_or_expired_is_none(self):
         client = await self._register()
@@ -274,6 +275,13 @@ class TestConsentEndpoint(unittest.TestCase):
         self.assertIn("Testmere", resp.text)
         self.assertIn('name="key"', resp.text)
         self.assertEqual(resp.headers["cache-control"], "no-store")
+
+    def test_get_renders_the_redirect_targets_host(self):
+        # client_record()'s redirect_uri is http://localhost:9999/cb; the
+        # GM should see that host so they can tell it apart from an
+        # attacker-registered client pointing somewhere unfamiliar.
+        resp = self.client.get("/consent", params={"txn": self._txn()})
+        self.assertIn("localhost:9999", resp.text)
 
     def test_post_wrong_key_rerenders_and_mints_nothing(self):
         txn = self._txn()
