@@ -17,12 +17,20 @@ name: live-wiki-canary
 # secrets-requiring check on `pull_request` would be permanently red on every
 # outside contribution with no way for the contributor to fix it.
 #
-# NON-BLOCKING, ON PURPOSE. This repo has no branch protection today, so
-# nothing here blocks a merge either way. The job is written to genuinely
-# fail (not continue-on-error) when the live check fails, so a real failure
-# shows red and is visible -- silencing it would defeat the point of a
-# canary. The only thing allowed to make this NOT fail is missing
-# configuration (see below), never a check that actually ran and failed.
+# NON-BLOCKING, ON PURPOSE. `main` is protected by the "Main" ruleset, whose
+# required status checks are the `suite` matrix jobs from tests.yml and
+# deliberately NOT this canary -- which could not serve as a merge gate
+# anyway, since it runs only on a schedule and never on `pull_request` (see
+# above: secrets are withheld from forked pull requests, so a
+# secrets-requiring check there would be permanently red with no way for a
+# contributor to fix it). Requiring it would block every merge forever.
+#
+# So nothing here blocks a merge, and that is the intent. The job is still
+# written to genuinely fail (not continue-on-error) when the live check
+# fails, so a real failure shows red and is visible -- silencing it would
+# defeat the point of a canary. The only thing allowed to make this NOT fail
+# is missing configuration (see below), never a check that actually ran and
+# failed.
 on:
   schedule:
     # Sundays 06:00 UTC -- a quiet time, chosen only to avoid contention with
