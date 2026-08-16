@@ -151,6 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-auth", action="store_true",
                         help="serve with no authentication — local testing "
                              "only; everything served is GM-only material")
+    parser.add_argument("--public-host",
+                        help="public hostname for DNS-rebinding protection "
+                             "when served through a tunnel (e.g. cloudflared)")
     parser.add_argument("--allow-direct-edits", action="store_true",
                         help="also expose write_entity, which edits "
                              "canonical files in place and commits each edit")
@@ -181,7 +184,22 @@ def main(argv: list[str] | None = None) -> int:
         print(_INSTALL_HINT, file=sys.stderr)
         return 1
 
-    app = server.streamable_http_app(stateless_http=True)
+    transport_security = None
+    if args.public_host:
+        try:
+            from mcp.server.transport_security import TransportSecuritySettings
+            transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=[args.public_host],
+                allowed_origins=[f"https://{args.public_host}", f"http://{args.public_host}"],
+            )
+        except ImportError:
+            pass
+
+    app = server.streamable_http_app(
+        stateless_http=True,
+        transport_security=transport_security,
+    )
     if token:
         app = _BearerAuth(app, token)
     else:
