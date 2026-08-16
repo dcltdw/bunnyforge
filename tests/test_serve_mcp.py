@@ -108,6 +108,11 @@ class TestMainGuards(unittest.TestCase):
             serve_mcp.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
 
+    def test_public_host_flag_is_parsed(self):
+        parser = serve_mcp.build_parser()
+        args = parser.parse_args(["--public-host", "example.trycloudflare.com"])
+        self.assertEqual(args.public_host, "example.trycloudflare.com")
+
     def test_refuses_to_start_without_token_or_no_auth(self):
         # A token in the invoking environment must not leak into the test.
         with mock.patch.dict("os.environ", {serve_mcp.TOKEN_ENV: ""}):
