@@ -234,3 +234,67 @@ class TestConsentAndTokens(unittest.IsolatedAsyncioTestCase):
         await self.provider.revoke_token(at)
         self.assertIsNone(
             await self.provider.load_access_token(tokens.access_token))
+
+
+@unittest.skipUnless(HAVE_MCP, "requires bunnyforge[mcp]")
+class TestConsentEndpoint(unittest.TestCase):
+
+    def setUp(self):
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.provider = SingleUserOAuthProvider(
+            gm_key="sekrit", issuer_url="http://127.0.0.1:8000",
+            state_path=root / "state.json")
+        endpoint = _mcp_auth.consent_endpoint(self.provider, "Testmere")
+        app = Starlette(routes=[
+            Route("/consent", endpoint, methods=["GET", "POST"])])
+        self.client = TestClient(app, follow_redirects=False)
+        self.enterContext(
+            mock.patch("bunnyforge._mcp_auth._KEY_DELAY", 0))
+
+    def _txn(self):
+        import asyncio
+        record = client_record("c1")
+        asyncio.run(self.provider.register_client(record))
+        url = asyncio.run(self.provider.authorize(record, auth_params()))
+        return url.split("txn=")[1]
+
+    def test_get_unknown_txn_is_400_with_recovery_text(self):
+        resp = self.client.get("/consent", params={"txn": "bogus"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("claude.ai", resp.text)
+        self.assertEqual(resp.headers["cache-control"], "no-store")
+
+    def test_get_renders_form_naming_client_and_campaign(self):
+        resp = self.client.get("/consent", params={"txn": self._txn()})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Claude", resp.text)
+        self.assertIn("Testmere", resp.text)
+        self.assertIn('name="key"', resp.text)
+        self.assertEqual(resp.headers["cache-control"], "no-store")
+
+    def test_post_wrong_key_rerenders_and_mints_nothing(self):
+        txn = self._txn()
+        resp = self.client.post("/consent",
+                                data={"txn": txn, "key": "wrong"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("try again", resp.text.lower())
+        self.assertEqual(self.provider._codes, {})
+        # the txn survives a wrong key: the GM can retry
+        self.assertIsNotNone(self.provider.consent_context(txn))
+
+    def test_post_right_key_redirects_with_code_and_state(self):
+        resp = self.client.post(
+            "/consent", data={"txn": self._txn(), "key": "sekrit"})
+        self.assertEqual(resp.status_code, 302)
+        location = resp.headers["location"]
+        self.assertTrue(location.startswith("http://localhost:9999/cb?"))
+        self.assertIn("code=", location)
+        self.assertIn("state=st8", location)
+
+    def test_post_dead_txn_is_400(self):
+        resp = self.client.post("/consent",
+                                data={"txn": "bogus", "key": "sekrit"})
+        self.assertEqual(resp.status_code, 400)

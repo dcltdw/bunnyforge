@@ -262,3 +262,61 @@ class SingleUserOAuthProvider(
                           expires_in=ACCESS_TTL,
                           scope=" ".join(scopes) or None,
                           refresh_token=refresh)
+
+
+# One page, used once per token lifetime by one person: inline HTML, no
+# styling, served no-store. The only secret it ever sees is the GM key.
+_CONSENT_PAGE = """<!doctype html>
+<title>bunnyforge — authorize access</title>
+<h1>Authorize {client} to access campaign “{campaign}”?</h1>
+{error}<form method="post" action="/consent">
+  <input type="hidden" name="txn" value="{txn}">
+  <label>GM key: <input type="password" name="key" autofocus></label>
+  <button type="submit">Authorize</button>
+</form>
+"""
+
+
+def consent_endpoint(provider: SingleUserOAuthProvider, campaign: str):
+    """Build the GET/POST /consent endpoint for one provider + campaign."""
+    import anyio
+    from starlette.responses import (HTMLResponse, PlainTextResponse,
+                                     RedirectResponse)
+
+    no_store = {"Cache-Control": "no-store"}
+
+    def dead_txn() -> PlainTextResponse:
+        return PlainTextResponse(
+            "This authorization link is no longer valid. "
+            "Retry the connection from claude.ai.",
+            status_code=400, headers=no_store)
+
+    def page(txn: str, client_name: str, error: str = "") -> HTMLResponse:
+        body = _CONSENT_PAGE.format(
+            client=html.escape(client_name),
+            campaign=html.escape(campaign),
+            txn=html.escape(txn),
+            error=f"<p><strong>{error}</strong></p>\n" if error else "")
+        return HTMLResponse(body, headers=no_store)
+
+    async def consent(request):
+        if request.method == "GET":
+            txn = request.query_params.get("txn", "")
+            ctx = provider.consent_context(txn)
+            if ctx is None:
+                return dead_txn()
+            return page(txn, ctx["client_name"])
+        form = await request.form()
+        txn = str(form.get("txn", ""))
+        ctx = provider.consent_context(txn)
+        if ctx is None:
+            return dead_txn()
+        if not provider.check_key(str(form.get("key", ""))):
+            await anyio.sleep(_KEY_DELAY)
+            return page(txn, ctx["client_name"], "Wrong key — try again.")
+        url = provider.grant(txn)
+        if url is None:
+            return dead_txn()
+        return RedirectResponse(url, status_code=302, headers=no_store)
+
+    return consent
