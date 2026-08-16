@@ -21,6 +21,11 @@ consent page in your own browser — it is never stored by claude.ai.
     cloudflared tunnel run <name>           # named tunnel, stable hostname
     bunnyforge serve-mcp --public-host <name>.example.com
 
+`--public-host` does two jobs, and behind a tunnel it is not optional:
+it anchors the OAuth issuer, and it declares the hostname to the
+server's DNS-rebinding protection. Omit it and every tunnelled request
+is refused with `421` before it reaches authentication.
+
 A **named tunnel** (free with a Cloudflare-managed domain) is the
 recommended recipe: the hostname — and therefore the connector URL in
 claude.ai and the OAuth trust it anchors — survives restarts. A quick
@@ -64,8 +69,10 @@ but not already-issued tokens — delete the state file for that.
 
 - **401 from `/mcp`:** no or expired token — reconnect from claude.ai.
 - **421 Invalid Host header through a tunnel:** DNS-rebinding protection
-  does not know your public hostname — issue #46 tracks the
-  `--public-host` transport fix.
+  does not know your public hostname. Pass `--public-host <hostname>` —
+  the same hostname the tunnel serves, with no scheme and no port. The
+  protection stays on and allows exactly that host, so a mismatch here
+  still shows as 421 rather than opening the server to any `Host`.
 - **"Couldn't register with sign-in service":** the server is not
   reachable at the connector URL, or it was started `--no-auth` (no OAuth
   routes exist in that mode).
