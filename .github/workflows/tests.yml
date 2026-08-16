@@ -43,3 +43,20 @@ jobs:
         run: |
           git status --porcelain
           test -z "$(git status --porcelain)"
+
+  # The `suite` matrix installs bunnyforge without the `mcp` extra, so every
+  # OAuth and MCP-server test is HAVE_MCP-skipped there. One job, one Python
+  # version: the matrix above already covers version portability, and this
+  # job exists only to prove the auth layer -- the thing standing between a
+  # tunnel and a campaign's secrets -- actually executes somewhere.
+  mcp-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install bunnyforge with the mcp extra
+        run: pip install -e '.[mcp]'
+      - name: Suite, discovery door
+        run: python3 -m unittest discover -s tests -t . -v
