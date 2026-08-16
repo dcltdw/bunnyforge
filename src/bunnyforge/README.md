@@ -56,14 +56,24 @@ not exist, or must be an empty directory — a file, a non-empty directory, or a
 existing `campaign.toml` is one `error:` line and exit 1. There is no `--force`
 and no overwrite semantics.
 
-What it writes: `campaign.toml` (live keys for name, namespace and the culture
-directory; every defaultable key present as a comment showing its default), the
-8 root docs, the 10 content directories each with its README, all 16
-`_Templates/` files, a starter culture at `names/cultures/vashkand.toml`, and a
-minimal `.gitignore`. It does not run `git init`; version control is your move.
-The result passes `review checkup` with 0 errors and 0 warnings and runs
-`generate_names` with no manual fixes — asserted by
+What it writes — 38 files, every one of them a `MANIFEST` entry: `campaign.toml`
+(live keys for name, namespace and the culture directory; every defaultable key
+present as a comment showing its default), the 8 root docs, the 10 content
+directories each with its README, the 12 `_Templates/` files, a starter culture
+at `names/cultures/vashkand.toml`, a minimal `.gitignore`, the 3-file `tests/`
+scaffold, and 2 files under `.vscode/`. It does not run `git init`; version
+control is your move. The result passes `review checkup` with 0 errors and 0
+warnings and runs `generate_names` with no manual fixes — asserted by
 `tests/test_init.py::TestFreshWorkspacePassesTheGate`.
+
+The `.vscode/` pair ships **inert**: `settings.json` carries a colouring block
+that tints `.md` files by their front-matter `visibility`, disabled line by line
+behind a reserved `//- ` prefix between two `bunnyforge:` marker comments, and
+`extensions.json` recommends the extension that renders it. A scaffolded
+workspace therefore looks exactly like one without the files until someone
+deletes the prefixes. The markers and the off-prefix are a frozen format —
+`tests/test_init.py::TestVscodeScaffold` pins them, and parses the file as
+strict JSON in both toggle states.
 
 The files live in `src/bunnyforge/data/`, and a single `MANIFEST` in `init.py`
 maps each to its destination and to the in-repo file it must stay
