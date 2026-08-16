@@ -352,5 +352,28 @@ class TestPreflight(unittest.TestCase):
         self.assertIn("--no-auth", out)
 
 
+    def test_a_tunnel_with_no_server_behind_it_is_not_blamed_on_auth(self):
+        # Found live: the tunnel answered 502 because nothing was
+        # listening on the bind port, and the check told the operator to
+        # restart with --auth-key. Sending someone to fix auth when the
+        # server is not running is precisely the misdiagnosis this
+        # command exists to prevent.
+        for status in (502, 503, 504):
+            with self.subTest(status=status):
+                probe = _probe_map(**{
+                    "/.well-known/oauth-protected-resource/mcp":
+                        (status, {}, b""),
+                    "/.well-known/oauth-authorization-server":
+                        (status, {}, b""),
+                    "/mcp": (status, {}, b""),
+                })
+                rc, out = self._run(probe)
+                self.assertEqual(rc, 1)
+                self.assertEqual(out.count("[FAIL]"), 1, out)
+                self.assertNotIn("--auth-key", out)
+                self.assertNotIn("--no-auth", out)
+                self.assertIn("serve-mcp", out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -243,6 +243,15 @@ def preflight(base_url: str, probe=_probe) -> list[Check]:
                       f"the server refused the hostname in {base} with 421 "
                       f"— restart it with --public-host set to exactly that "
                       f"hostname (no scheme, no port)")]
+    if status >= 500:
+        # The tunnel answered; whatever it points at did not. Found live:
+        # a 502 was previously read as "no OAuth routes" and sent the
+        # operator off to fix auth on a server that was not running.
+        return [Check(False, "origin reachable",
+                      f"{base} answered {status} — the tunnel is up but "
+                      f"nothing is serving behind it; start `bunnyforge "
+                      f"serve-mcp` on the port the tunnel points at, then "
+                      f"re-run this check")]
     if status == 404:
         # One cause, one line. Reporting it three times (no routes, no
         # metadata, /mcp open) buries the sentence that names the fix.
