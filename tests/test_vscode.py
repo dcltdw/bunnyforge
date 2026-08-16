@@ -8,6 +8,7 @@ real editor.
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -396,3 +397,143 @@ class TestCache(unittest.TestCase):
         with mock.patch.object(vscode, "cache_dir", return_value=tmp):
             path = vscode.obtain_vsix(release, fetch=lambda url: b"vsix")
         self.assertEqual(path.read_bytes(), b"vsix")
+
+
+def _machine_env(case, installed=None, listing=""):
+    """Patch discovery + subprocess + network for machine-half tests.
+    Returns the mock recording _run calls."""
+    editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+    case.enterContext(mock.patch.object(
+        vscode, "discover_editors", return_value=[editor]))
+    shown = (f"{vscode.EXTENSION_ID}@{installed}\n" if installed else "")
+    run = case.enterContext(mock.patch.object(
+        vscode, "_run",
+        return_value=_proc(shown + listing)))
+    case.enterContext(mock.patch.object(
+        vscode, "latest_release",
+        return_value=vscode.latest_release(fetch=lambda url: RELEASE_JSON)))
+    tmp = Path(case.enterContext(tempfile.TemporaryDirectory()))
+    case.enterContext(mock.patch.object(
+        vscode, "obtain_vsix",
+        return_value=tmp / "v0.2.0-x.vsix"))
+    return run
+
+
+class TestInstallUpdate(unittest.TestCase):
+
+    def test_install_refuses_without_yes_when_not_a_tty(self):
+        _machine_env(self)
+        with mock.patch.object(vscode, "_interactive", return_value=False):
+            with contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()) as err:
+                rc = vscode.main(["install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--yes", err.getvalue())
+
+    def test_install_prints_provenance_and_installs(self):
+        run = _machine_env(self)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["install", "--yes"])
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn(vscode.EXTENSION_REPO, text)   # pinned source, shown
+        self.assertIn("v0.2.0", text)
+        install_call = run.call_args_list[-1].args[0]
+        self.assertEqual(install_call[:2], ["/u/code", "--install-extension"])
+        self.assertIn("--force", install_call)
+
+    def test_install_is_idempotent_at_the_current_version(self):
+        run = _machine_env(self, installed="0.2.0")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["install", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to do", out.getvalue())
+        for call in run.call_args_list:
+            self.assertNotIn("--install-extension", call.args[0])
+
+    def test_update_requires_an_existing_install(self):
+        _machine_env(self)   # nothing installed
+        with contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = vscode.main(["update", "--yes"])
+        self.assertEqual(rc, 1)
+        self.assertIn("vscode install", err.getvalue())
+
+    def test_update_upgrades_an_older_install(self):
+        run = _machine_env(self, installed="0.1.0")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["update", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("--install-extension",
+                      run.call_args_list[-1].args[0])
+
+
+class TestUninstall(unittest.TestCase):
+
+    def test_uninstall_runs_the_editor_cli(self):
+        run = _machine_env(self, installed="0.2.0")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args_list[-1].args[0],
+                         ["/u/code", "--uninstall-extension",
+                          vscode.EXTENSION_ID])
+
+    def test_uninstall_when_absent_is_a_no_op(self):
+        run = _machine_env(self)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to do", out.getvalue())
+        for call in run.call_args_list:
+            self.assertNotIn("--uninstall-extension", call.args[0])
+
+
+class TestStatus(unittest.TestCase):
+
+    def test_status_without_a_workspace_says_so_and_exits_zero(self):
+        _machine_env(self, installed="0.1.0")
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_WORKSPACE"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(Path, "cwd", return_value=tmp), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status"])
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("0.1.0", text)          # installed
+        self.assertIn("0.2.0", text)          # available
+        self.assertIn("none found", text)     # the workspace half, plainly
+
+    def test_status_reports_colouring_state_in_a_workspace(self):
+        _machine_env(self, installed="0.2.0")
+        ws = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        (ws / "campaign.toml").write_text(
+            '[campaign]\nnamespace = "probe"\n', encoding="utf-8")
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_bytes(
+            init.packaged_bytes("vscode/settings.json"))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        self.assertIn("off", out.getvalue())
+
+    def test_status_degrades_when_github_is_unreachable(self):
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        self.enterContext(mock.patch.object(vscode, "_run",
+                                            return_value=_proc("")))
+        self.enterContext(mock.patch.object(
+            vscode, "latest_release",
+            side_effect=vscode.VscodeError("couldn't reach GitHub")))
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_WORKSPACE"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(Path, "cwd", return_value=tmp), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["status"])
+        self.assertEqual(rc, 0)               # status reports; never fails
+        self.assertIn("unknown", out.getvalue())

@@ -450,3 +450,245 @@ def obtain_vsix(release: Release, fetch=_fetch) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     return dest
+
+
+# ── Confirmation ────────────────────────────────────────────────────────
+
+def _confirm(question: str, assume_yes: bool) -> bool:
+    """The trust gate: this command installs code into the user's editor,
+    so the interactive path confirms and automation opts in explicitly."""
+    if assume_yes:
+        return True
+    if not _interactive():
+        raise VscodeError(
+            "standard input is not a terminal — pass --yes to confirm "
+            "non-interactively")
+    return _ask(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+
+
+def _dotted(version: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+# ── Machine-half subcommands ────────────────────────────────────────────
+
+def cmd_install(args) -> int:
+    return _ensure(args, update_only=False)
+
+
+def cmd_update(args) -> int:
+    return _ensure(args, update_only=True)
+
+
+def _ensure(args, update_only: bool) -> int:
+    editor = pick_editor(discover_editors(), args.editor)
+    installed = installed_version(editor)
+    if update_only and installed is None:
+        raise VscodeError(
+            f"{EXTENSION_ID} is not installed in {editor.label} — run: "
+            f"bunnyforge vscode install")
+    release = latest_release()
+    if installed == release.version:
+        print(f"{EXTENSION_ID} {_dotted(installed)} is current in "
+              f"{editor.label} — nothing to do")
+        return 0
+    if installed and installed > release.version:
+        print(f"installed {_dotted(installed)} is newer than the latest "
+              f"release {release.tag} — nothing to do")
+        return 0
+    vsix = obtain_vsix(release)
+    print(f"about to install {EXTENSION_ID} {release.tag}")
+    print(f"  from  https://github.com/{EXTENSION_REPO} (pinned source)")
+    print(f"  file  {vsix}")
+    print(f"  into  {editor.label} ({editor.path})")
+    if not editor.supported:
+        print("  note  only Visual Studio Code is tested; this editor is "
+              "offered unsupported and may have bugs")
+    if not _confirm("proceed?", args.yes):
+        print("cancelled — nothing installed")
+        return 1
+    proc = _run([editor.path, "--install-extension", str(vsix), "--force"])
+    if proc.returncode != 0:
+        raise VscodeError(
+            f"{editor.cli_id} --install-extension failed: "
+            f"{proc.stderr.strip() or proc.returncode}")
+    verb = "updated to" if installed else "installed at"
+    print(f"{EXTENSION_ID} {verb} {release.tag} in {editor.label}")
+    print("note: sideloaded extensions never auto-update — run "
+          "`bunnyforge vscode update` when a release lands")
+    return 0
+
+
+def cmd_uninstall(args) -> int:
+    editor = pick_editor(discover_editors(), args.editor)
+    if installed_version(editor) is None:
+        print(f"{EXTENSION_ID} is not installed in {editor.label} — "
+              f"nothing to do")
+        return 0
+    if not _confirm(f"remove {EXTENSION_ID} from {editor.label}?", args.yes):
+        print("cancelled")
+        return 1
+    proc = _run([editor.path, "--uninstall-extension", EXTENSION_ID])
+    if proc.returncode != 0:
+        raise VscodeError(
+            f"{editor.cli_id} --uninstall-extension failed: "
+            f"{proc.stderr.strip() or proc.returncode}")
+    print(f"removed {EXTENSION_ID} from {editor.label}")
+    return 0
+
+
+def _has_extension(editor: Editor, extension_id: str) -> bool:
+    proc = _run([editor.path, "--list-extensions"])
+    return proc.returncode == 0 and extension_id in proc.stdout.split()
+
+
+def cmd_status(args) -> int:
+    # Machine half: unconditional (decision 5).
+    editors = discover_editors()
+    if not editors:
+        print("editor         none found (searched PATH and known "
+              "locations)")
+    else:
+        try:
+            editor = pick_editor(editors, args.editor)
+        except VscodeError:
+            editor = editors[0]
+        print(f"editor         {editor.label} ({editor.path})")
+        installed = installed_version(editor)
+        try:
+            release = latest_release()
+            available = f"{_dotted(release.version)} available"
+        except VscodeError as exc:
+            release = None
+            available = f"latest unknown ({exc})"
+        if installed is None:
+            print(f"preview ext    not installed; {available}")
+        elif release and installed < release.version:
+            print(f"preview ext    {_dotted(installed)} installed; "
+                  f"{available} — run: bunnyforge vscode update")
+        else:
+            print(f"preview ext    {_dotted(installed)} installed; "
+                  f"{available}")
+        if _has_extension(editor, HIGHLIGHT_ID):
+            print("highlight ext  installed")
+        else:
+            print("highlight ext  not installed — source-view rules will "
+                  "not render")
+    # Workspace half: only when one is found; say plainly when not.
+    try:
+        root = _config.resolve_workspace(args.workspace).root
+    except (_config.ConfigError, _workspace.WorkspaceError):
+        print("workspace      none found — `on`/`off` need one")
+        return 0
+    print(f"workspace      {root}")
+    path = root / SETTINGS_REL
+    if not path.is_file():
+        print(f"colouring      no {SETTINGS_REL} — `bunnyforge vscode on` "
+              f"creates it")
+        return 0
+    lines = path.read_text(encoding="utf-8").split("\n")
+    try:
+        region = maybe_region(lines)
+    except VscodeError:
+        print("colouring      managed markers unbalanced — restore the "
+              "marker pair by hand")
+        return 0
+    if region is None:
+        print("colouring      no managed block — `bunnyforge vscode on` "
+              "adds one")
+    else:
+        print(f"colouring      {region_state(lines, *region)}")
+    if not any(l.strip().startswith('"markdown.preview.frontMatter"')
+               for l in lines):
+        print('frontMatter    not pinned — add '
+              '"markdown.preview.frontMatter": "table" so the preview '
+              'renders the table the extension decorates')
+    return 0
+
+
+def cmd_setup(args) -> int:
+    raise VscodeError("not implemented yet")  # Task 7
+
+
+def cmd_on(args) -> int:
+    raise VscodeError("not implemented yet")  # Task 7
+
+
+def cmd_off(args) -> int:
+    raise VscodeError("not implemented yet")  # Task 7
+
+
+# ── The front door ──────────────────────────────────────────────────────
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="bunnyforge vscode",
+        description=(
+            "Install the bunnyforge-visibility-preview extension and "
+            "toggle the source-view colouring. Subcommands differ in what "
+            "they need: install/update/uninstall act on this machine's "
+            "editor and need no workspace; on/off edit the workspace's "
+            ".vscode/settings.json and require one; status and setup "
+            "cover the workspace half only when a workspace is found."))
+    sub = parser.add_subparsers(dest="subcommand", required=True,
+                                metavar="subcommand")
+
+    def add(name, func, help_text, *, workspace=False, editor=True,
+            yes=True, conflict=False):
+        p = sub.add_parser(name, help=help_text)
+        p.set_defaults(func=func)
+        if workspace:
+            p.add_argument("--workspace", metavar="PATH",
+                           help="campaign workspace (default: search "
+                                "upward from the current directory)")
+        if editor:
+            p.add_argument("--editor", metavar="CLI",
+                           help="editor CLI to target: "
+                                "code|code-insiders|codium|cursor "
+                                "(only code is tested)")
+        if yes:
+            p.add_argument("--yes", action="store_true",
+                           help="answer yes to every confirmation "
+                                "(for automation)")
+        if conflict:
+            group = p.add_mutually_exclusive_group()
+            group.add_argument("--adopt", action="store_true",
+                               help="bring an existing highlight.regexes "
+                                    "under management, content untouched")
+            group.add_argument("--replace", action="store_true",
+                               help="reset the managed block to the "
+                                    "packaged rules, discarding tuning")
+        return p
+
+    add("status", cmd_status, "report both halves and their versions",
+        workspace=True, yes=False)
+    add("setup", cmd_setup, "install or update, then offer to turn "
+        "colouring on", workspace=True, conflict=True)
+    add("install", cmd_install, "install the preview extension into the "
+        "editor")
+    add("update", cmd_update, "update an installed preview extension")
+    add("uninstall", cmd_uninstall, "remove the preview extension — the "
+        "only real off for the preview half")
+    add("on", cmd_on, "enable source-view colouring in the workspace",
+        workspace=True, conflict=True)
+    add("off", cmd_off, "disable source-view colouring in the workspace",
+        workspace=True, editor=False, yes=False)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except (VscodeError, _config.ConfigError,
+            _workspace.WorkspaceError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        sys.stderr.close()
+        raise SystemExit(0)
