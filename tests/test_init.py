@@ -11,6 +11,7 @@ workspace either side of the suite and fails the run on any difference.
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -406,6 +407,18 @@ class TestWhatInitWrites(unittest.TestCase):
             self.assertIn(pointer, result.stdout)
             self.assertTrue((target / pointer).is_file())
 
+    def test_points_at_the_inert_vscode_scaffold_once(self):
+        # One line, not a paragraph (#34) — and command-neutral: the
+        # `bunnyforge vscode` command does not exist until #33.
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                init.main([str(tmp / "new"), "--name", "X"]), 0)
+        pointing = [l for l in out.getvalue().splitlines()
+                    if ".vscode/settings.json" in l]
+        self.assertEqual(len(pointing), 1, out.getvalue())
+
     def test_does_not_write_reanchor_txt(self):
         # Measured at plan time: AGENTS.md's read order never mentions it, and
         # the checkup gate passes without it. It is campaign state, not a root
@@ -517,3 +530,96 @@ class TestFreshWorkspacePassesTheGate(unittest.TestCase):
         names = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
         self.assertEqual(len(names), 3, result.stdout)
         self.assertTrue(all(names), result.stdout)
+
+
+# The cross-ticket contract with the `bunnyforge vscode` command (#33):
+# these strings are frozen — #33 parses them. Hardcoded here because the
+# constants live in vscode.py, which does not exist until #33; that ticket
+# adds a drift test binding its constants to these packaged bytes.
+VSCODE_MARKER_BEGIN = "// bunnyforge:begin visibility-colouring"
+VSCODE_MARKER_END = "// bunnyforge:end visibility-colouring"
+VSCODE_OFF_PREFIX = "//- "
+
+
+class TestVscodeScaffold(unittest.TestCase):
+    """The packaged .vscode/ files: inert on arrival, valid JSONC in both
+    toggle states, and never recommending an extension that cannot resolve.
+
+    These tests deliberately do NOT pin the comment prose — #33 rewords the
+    headers to name the `bunnyforge vscode` command once it exists, and that
+    must not break this suite.
+    """
+
+    def _settings_lines(self) -> list[str]:
+        return (init.packaged_bytes("vscode/settings.json")
+                .decode("utf-8").split("\n"))
+
+    def test_settings_carries_exactly_one_marker_pair_in_order(self):
+        stripped = [l.strip() for l in self._settings_lines()]
+        self.assertEqual(stripped.count(VSCODE_MARKER_BEGIN), 1)
+        self.assertEqual(stripped.count(VSCODE_MARKER_END), 1)
+        self.assertLess(stripped.index(VSCODE_MARKER_BEGIN),
+                        stripped.index(VSCODE_MARKER_END))
+
+    def test_the_managed_region_ships_fully_inert(self):
+        stripped = [l.strip() for l in self._settings_lines()]
+        begin = stripped.index(VSCODE_MARKER_BEGIN)
+        end = stripped.index(VSCODE_MARKER_END)
+        region = [l for l in stripped[begin + 1:end] if l]
+        self.assertTrue(region, "managed region is empty")
+        for line in region:
+            self.assertTrue(line.startswith("//"),
+                            f"live line inside the shipped region: {line!r}")
+        self.assertTrue(
+            any(l.startswith(VSCODE_OFF_PREFIX) for l in region),
+            "no //-  disabled block — nothing for `vscode on` to enable")
+
+    def _as_json(self, *, enabled: bool):
+        """The file as strict JSON: comments dropped, //-  lines optionally
+        re-enabled first — simulating exactly what #33's toggle does."""
+        kept = []
+        for raw in self._settings_lines():
+            indent = raw[:len(raw) - len(raw.lstrip())]
+            body = raw.strip()
+            if enabled and body.startswith(VSCODE_OFF_PREFIX):
+                kept.append(indent + body[len(VSCODE_OFF_PREFIX):])
+            elif not body.startswith("//"):
+                kept.append(raw)
+        return json.loads("\n".join(kept))
+
+    def test_settings_is_strict_json_with_the_block_off(self):
+        self.assertEqual(self._as_json(enabled=False),
+                         {"markdown.preview.frontMatter": "table"})
+
+    def test_settings_is_strict_json_with_the_block_enabled(self):
+        data = self._as_json(enabled=True)
+        self.assertEqual(data["markdown.preview.frontMatter"], "table")
+        self.assertEqual(set(data["highlight.regexes"]), {
+            r"^(visibility:\s*gm-only\s*)$",
+            r"^(visibility:\s*player-visible\s*)$",
+            r"^(visibility:\s*mixed\s*)$",
+            r"^(## GM notes\s*)$",
+            r"^(reveal_when:.*)$",
+        })
+        for rule in data["highlight.regexes"].values():
+            self.assertEqual(rule["filterLanguageRegex"], "markdown")
+
+    def test_extensions_recommends_only_the_marketplace_extension(self):
+        lines = (init.packaged_bytes("vscode/extensions.json")
+                 .decode("utf-8").split("\n"))
+        data = json.loads("\n".join(
+            l for l in lines if not l.strip().startswith("//")))
+        self.assertEqual(
+            data, {"recommendations": ["fabiospampinato.vscode-highlight"]})
+
+    def test_the_preview_extension_appears_only_in_comments(self):
+        # It is not on the Marketplace; a recommendation entry could never
+        # resolve, so its id must never appear on a live line.
+        for resource in ("vscode/settings.json", "vscode/extensions.json"):
+            for line in (init.packaged_bytes(resource)
+                         .decode("utf-8").split("\n")):
+                if "bunnyforge-visibility-preview" in line:
+                    self.assertTrue(
+                        line.strip().startswith("//"),
+                        f"{resource}: live reference to the unlisted "
+                        f"extension: {line!r}")
