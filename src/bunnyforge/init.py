@@ -80,6 +80,12 @@ MANIFEST = (
     Packaged("doctrine/AGENTS.md", "AGENTS.md", "AGENTS.md", False),
     # Shipped without the dot so no packaging glob has to care about dotfiles.
     Packaged("root/gitignore", ".gitignore", None, False),
+    # The VS Code visibility colour language, source-view half (#34).
+    # Ships INERT: the managed block is disabled with "//- " prefixes;
+    # `bunnyforge vscode` (#33) toggles it between the marker comments.
+    # canonical=None: authored stubs, no in-repo canonical source.
+    Packaged("vscode/settings.json", ".vscode/settings.json", None, False),
+    Packaged("vscode/extensions.json", ".vscode/extensions.json", None, False),
     *(Packaged(f"root/{name}", name, None, False) for name in ROOT_STUBS),
     *(Packaged(f"templates/{name}", f"_Templates/{name}",
                f"_Templates/{name}", False) for name in TEMPLATE_FILES),

@@ -1,0 +1,16 @@
+{
+  // The visibility line-highlighting in settings.json is rendered by
+  // this extension. Without it installed, files simply render plain.
+  //
+  // The markdown-preview half of the same colour language lives in
+  // dcltdw.bunnyforge-visibility-preview. It is deliberately NOT listed
+  // below: it is not on the VS Code Marketplace (publishing there now
+  // requires an Azure DevOps org linked to an active Azure
+  // subscription), so a recommendation entry could never resolve.
+  // Install it from its GitHub releases instead —
+  //   https://github.com/dcltdw/bunnyforge-visibility-preview/releases/latest
+  //   code --install-extension <downloaded .vsix file>
+  // It is optional: absent, the preview renders the plain front-matter
+  // table.
+  "recommendations": ["fabiospampinato.vscode-highlight"]
+}

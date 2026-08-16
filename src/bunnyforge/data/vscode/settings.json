@@ -1,0 +1,134 @@
+{
+  // ── Visibility colouring ────────────────────────────────────────────
+  // Colours workspace .md files by their front-matter `visibility`
+  // (see AGENTS.md -> Player visibility). Rendered by the
+  // fabiospampinato.vscode-highlight extension (see extensions.json).
+  //
+  // Hue roles (constant in every palette): red = gm-only and the
+  // `## GM notes` boundary, green = player-visible, cyan = mixed.
+  // Each rule carries "dark" and "light" variants; VS Code applies the
+  // half matching the current theme automatically.
+  //
+  // Two axes:
+  //   mode      dark | light      — automatic, via the theme
+  //   contrast  high | saturated | subtle
+  //
+  // The block between the two bunnyforge marker comments below is
+  // managed; the marker lines themselves must not be edited. The block
+  // ships OFF: every disabled line starts with "//- " — a prefix
+  // reserved for the toggle; ordinary comments use plain "//". To turn
+  // colouring on, delete every "//- " prefix. ACTIVE LEVEL: high; to
+  // switch, re-disable the high block and enable one alternate below.
+  // bunnyforge:begin visibility-colouring
+  //- "highlight.regexes": {
+    //- "^(visibility:\\s*gm-only\\s*)$": {
+      //- "regexFlags": "gm",
+      //- "filterLanguageRegex": "markdown",
+      //- "decorations": [{
+        //- "isWholeLine": true,
+        //- "dark":  { "backgroundColor": "#ff3333", "color": "#000000" },
+        //- "light": { "backgroundColor": "#b91c1c", "color": "#ffffff" }
+      //- }]
+    //- },
+    //- "^(visibility:\\s*player-visible\\s*)$": {
+      //- "regexFlags": "gm",
+      //- "filterLanguageRegex": "markdown",
+      //- "decorations": [{
+        //- "isWholeLine": true,
+        //- "dark":  { "backgroundColor": "#00ff00", "color": "#000000" },
+        //- "light": { "backgroundColor": "#15803d", "color": "#ffffff" }
+      //- }]
+    //- },
+    //- "^(visibility:\\s*mixed\\s*)$": {
+      //- "regexFlags": "gm",
+      //- "filterLanguageRegex": "markdown",
+      //- "decorations": [{
+        //- "isWholeLine": true,
+        //- "dark":  { "backgroundColor": "#00ffff", "color": "#000000" },
+        //- "light": { "backgroundColor": "#0e7490", "color": "#ffffff" }
+      //- }]
+    //- },
+    //- "^(## GM notes\\s*)$": {
+      //- "regexFlags": "gm",
+      //- "filterLanguageRegex": "markdown",
+      //- "decorations": [{
+        //- "isWholeLine": true,
+        //- "dark":  { "backgroundColor": "#ff3333", "color": "#000000" },
+        //- "light": { "backgroundColor": "#b91c1c", "color": "#ffffff" }
+      //- }]
+    //- },
+    //- "^(reveal_when:.*)$": {
+      //- "regexFlags": "gm",
+      //- "filterLanguageRegex": "markdown",
+      //- "decorations": [{
+        //- "isWholeLine": true,
+        //- "fontStyle": "italic",
+        //- "dark":  { "color": "#8a8a8a" },
+        //- "light": { "color": "#777777" }
+      //- }]
+    //- }
+  //- },
+  // ── ALTERNATE: saturated ───────────────────────────────────────────
+  // "highlight.regexes": {
+  //   "^(visibility:\\s*gm-only\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#ef4444", "color": "#000000" },
+  //       "light": { "backgroundColor": "#fca5a5", "color": "#000000",
+  //                  "borderStyle": "solid", "borderColor": "#dc2626", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(visibility:\\s*player-visible\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#22c55e", "color": "#000000" },
+  //       "light": { "backgroundColor": "#86efac", "color": "#000000",
+  //                  "borderStyle": "solid", "borderColor": "#16a34a", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(visibility:\\s*mixed\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#06b6d4", "color": "#000000" },
+  //       "light": { "backgroundColor": "#67e8f9", "color": "#000000",
+  //                  "borderStyle": "solid", "borderColor": "#0891b2", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(## GM notes\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#ef4444", "color": "#000000" },
+  //       "light": { "backgroundColor": "#fca5a5", "color": "#000000",
+  //                  "borderStyle": "solid", "borderColor": "#dc2626", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(reveal_when:.*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true, "fontStyle": "italic",
+  //       "dark": { "color": "#8a8a8a" }, "light": { "color": "#777777" } }] }
+  // }
+  // ── ALTERNATE: subtle ──────────────────────────────────────────────
+  // "highlight.regexes": {
+  //   "^(visibility:\\s*gm-only\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#513333", "color": "#e6d6d6" },
+  //       "light": { "backgroundColor": "rgba(185,28,28,0.14)",
+  //                  "borderStyle": "solid", "borderColor": "rgba(185,28,28,0.8)", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(visibility:\\s*player-visible\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#31463a", "color": "#d8e4dc" },
+  //       "light": { "backgroundColor": "rgba(21,128,61,0.12)",
+  //                  "borderStyle": "solid", "borderColor": "rgba(21,128,61,0.8)", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(visibility:\\s*mixed\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#2f4a4e", "color": "#d5e4e6" },
+  //       "light": { "backgroundColor": "rgba(14,116,144,0.12)",
+  //                  "borderStyle": "solid", "borderColor": "rgba(14,116,144,0.8)", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(## GM notes\\s*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true,
+  //       "dark":  { "backgroundColor": "#513333", "color": "#e6d6d6" },
+  //       "light": { "backgroundColor": "rgba(185,28,28,0.14)",
+  //                  "borderStyle": "solid", "borderColor": "rgba(185,28,28,0.8)", "borderWidth": "0 0 0 3px" } }] },
+  //   "^(reveal_when:.*)$": { "regexFlags": "gm", "filterLanguageRegex": "markdown",
+  //     "decorations": [{ "isWholeLine": true, "fontStyle": "italic",
+  //       "dark": { "color": "#8a8a8a" }, "light": { "color": "#777777" } }] }
+  // }
+  // bunnyforge:end visibility-colouring
+
+  // ── Markdown preview ────────────────────────────────────────────────
+  // The preview half of the visibility colouring: the
+  // dcltdw.bunnyforge-visibility-preview extension (see extensions.json
+  // for how to install it) decorates the front-matter table the preview
+  // renders. Pinned to "table" so a user-level "hide" or an upstream
+  // default change cannot silently remove the table the decorator needs.
+  // Deliberately OUTSIDE the managed block: it belongs to the preview
+  // half, and turning source-view colouring off must not remove it.
+  "markdown.preview.frontMatter": "table"
+}
