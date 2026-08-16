@@ -343,7 +343,11 @@ class TestOAuthOverHTTP(unittest.TestCase):
             state_path=root / "state.json")
         server = serve_mcp.build_server(scaffold_store(self),
                                         oauth=self.provider)
-        app = server.streamable_http_app(stateless_http=True)
+        # Through build_app, as main() does. No public host here, so this
+        # is the localhost default -- the point is that these tests keep
+        # exercising the construction the command actually uses, rather
+        # than drifting from it. TestTunnelledOAuth covers the tunnel.
+        app = serve_mcp.build_app(server)
         self.client = self.enterContext(
             TestClient(app, base_url=self.ISSUER, follow_redirects=False))
         self.enterContext(
@@ -472,7 +476,7 @@ class TestOAuthOverHTTP(unittest.TestCase):
         from starlette.testclient import TestClient
         from bunnyforge import serve_mcp
         server = serve_mcp.build_server(scaffold_store(self))
-        app = server.streamable_http_app(stateless_http=True)
+        app = serve_mcp.build_app(server)
         with TestClient(app, base_url=self.ISSUER,
                         follow_redirects=False) as client:
             for path in ("/.well-known/oauth-authorization-server",
@@ -481,3 +485,151 @@ class TestOAuthOverHTTP(unittest.TestCase):
                 self.assertEqual(client.get(path).status_code, 404, path)
             self.assertNotEqual(client.post("/mcp", json={})
                                 .status_code, 401)
+
+
+@unittest.skipUnless(HAVE_MCP, "requires bunnyforge[mcp]")
+class TestTunnelledOAuth(unittest.TestCase):
+    """The configuration a GM actually runs, which nothing covered.
+
+    Behind a tunnel both halves are live at once: the OAuth server (#42)
+    and DNS-rebinding protection with a declared hostname (#46), on the
+    https issuer the tunnel provides. Each half is well covered alone --
+    TestOAuthOverHTTP builds its app with no transport security, and
+    test_serve_mcp's TestTunnelHost builds its app with no OAuth -- so
+    the one arrangement that ships was the one arrangement untested.
+
+    That matters because the place it would otherwise surface is a live
+    tunnel with a connector half-configured, which is the most expensive
+    place to find out.
+    """
+
+    HOST = "campaign.example.com"
+    ISSUER = f"https://{HOST}"
+
+    def setUp(self):
+        self.client = self.enterContext(self._client_for(self.ISSUER))
+        self.enterContext(mock.patch("bunnyforge._mcp_auth._KEY_DELAY", 0))
+
+    def _client_for(self, base_url):
+        """A client over a FRESH app, built exactly as main() builds it
+        behind a tunnel.
+
+        Fresh per call rather than shared: TestClient runs the app's
+        lifespan, and the SDK's session manager refuses a second run on
+        one instance -- so the foreign-host check needs its own app.
+        """
+        from starlette.testclient import TestClient
+        from bunnyforge import serve_mcp
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.provider = SingleUserOAuthProvider(
+            gm_key="sekrit", issuer_url=self.ISSUER,
+            state_path=root / "state.json")
+        server = serve_mcp.build_server(scaffold_store(self),
+                                        oauth=self.provider)
+        app = serve_mcp.build_app(server, public_host=self.HOST)
+        return TestClient(app, base_url=base_url, follow_redirects=False)
+
+    def _token_via_full_flow(self) -> str:
+        """Register → authorize → consent → token on the declared host,
+        asserting every step, and return the access token."""
+        reg = self.client.post("/register", json={
+            "client_name": "Claude",
+            "redirect_uris": ["http://localhost:9999/cb"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+        })
+        self.assertEqual(reg.status_code, 201, reg.text)
+        info = reg.json()
+
+        verifier, challenge = pkce_pair()
+        auth = self.client.get("/authorize", params={
+            "client_id": info["client_id"],
+            "response_type": "code",
+            "redirect_uri": "http://localhost:9999/cb",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": "st8",
+        })
+        self.assertEqual(auth.status_code, 302, auth.text)
+        consent_url = auth.headers["location"]
+
+        self.assertEqual(self.client.get(consent_url).status_code, 200)
+        txn = consent_url.split("txn=")[1]
+        granted = self.client.post(
+            "/consent", data={"txn": txn, "key": "sekrit"})
+        self.assertEqual(granted.status_code, 302, granted.text)
+        code = granted.headers["location"].split("code=")[1].split("&")[0]
+
+        tok = self.client.post("/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://localhost:9999/cb",
+            "client_id": info["client_id"],
+            "client_secret": info["client_secret"],
+            "code_verifier": verifier,
+        })
+        self.assertEqual(tok.status_code, 200, tok.text)
+        return tok.json()["access_token"]
+
+    def test_the_whole_flow_completes_on_the_tunnel_hostname(self):
+        resp = self.client.post(
+            "/mcp", json={},
+            headers={"Authorization": f"Bearer {self._token_via_full_flow()}"})
+        # Anything but 401/421 proves both layers passed it through;
+        # protocol-level responses are the SDK's business.
+        self.assertNotEqual(resp.status_code, 401, "auth rejected the token")
+        self.assertNotEqual(resp.status_code, 421,
+                            "the declared tunnel host was refused")
+
+    def test_the_issuer_advertised_is_the_tunnel_https_url(self):
+        # What claude.ai fetches first. If this said 127.0.0.1 the
+        # connector would walk off to an address it cannot reach.
+        meta = self.client.get(
+            "/.well-known/oauth-authorization-server").json()
+        self.assertEqual(meta["issuer"].rstrip("/"), self.ISSUER)
+        for key in ("registration_endpoint", "authorization_endpoint",
+                    "token_endpoint"):
+            self.assertTrue(meta[key].startswith(self.ISSUER + "/"),
+                            f"{key} points off the tunnel host: {meta[key]}")
+
+    def test_a_valid_token_from_a_foreign_host_is_still_refused(self):
+        """The security-relevant half, and the non-vacuity check.
+
+        Measured rather than assumed: with OAuth mounted, an
+        *unauthenticated* foreign-Host request to /mcp surfaces as 401,
+        because the auth middleware runs before the transport check. That
+        ordering makes 401 a useless probe here -- it would pass even if
+        DNS-rebinding protection had been switched off entirely.
+
+        So this presents a genuinely valid token, minted through the real
+        flow on the declared host, and asserts the foreign Host is refused
+        anyway. That is what proves the #46 guard still covers /mcp once
+        the #48 OAuth layer is in front of it.
+        """
+        token = self._token_via_full_flow()
+        auth = {"Authorization": f"Bearer {token}"}
+        served = self.client.post("/mcp", json={}, headers=auth)
+        self.assertNotEqual(served.status_code, 421,
+                            "the declared host should be served")
+        for foreign in ("evil.example.com", "127.0.0.1"):
+            with self.subTest(host=foreign):
+                self.assertEqual(
+                    self.client.post("/mcp", json={},
+                                     headers={**auth, "Host": foreign})
+                    .status_code, 421)
+
+    def test_discovery_stays_public_on_any_host(self):
+        # Deliberate, not an oversight: OAuth bootstrap is unauthenticated
+        # by definition and the SDK mounts it outside the transport
+        # wrapper, so discovery answers whatever Host asks. It carries no
+        # campaign data -- only the issuer URL a client needs before it
+        # can hold a token. Pinned so a future reader does not "harden"
+        # it and silently break the connector's first request.
+        for foreign in ("evil.example.com", "127.0.0.1"):
+            with self.subTest(host=foreign):
+                resp = self.client.get(
+                    "/.well-known/oauth-authorization-server",
+                    headers={"Host": foreign})
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()["issuer"].rstrip("/"),
+                                 self.ISSUER)

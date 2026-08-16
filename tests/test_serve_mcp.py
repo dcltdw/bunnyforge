@@ -169,8 +169,7 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
 
     async def test_streamable_app_is_asgi(self):
         server = serve_mcp.build_server(scaffold(self))
-        app = server.streamable_http_app(stateless_http=True)
-        self.assertTrue(callable(app))
+        self.assertTrue(callable(serve_mcp.build_app(server)))
 
 
 if __name__ == "__main__":
