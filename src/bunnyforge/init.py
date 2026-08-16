@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Created campaign workspace {path} — {len(written)} files "
           f"(name {args.name!r}, namespace {namespace!r}).")
     print("Optional: VS Code colouring by visibility ships off — "
-          "see .vscode/settings.json.")
+          "run 'bunnyforge vscode setup'.")
     print(f"Next: cd {path} && bunnyforge review checkup")
     return 0
 

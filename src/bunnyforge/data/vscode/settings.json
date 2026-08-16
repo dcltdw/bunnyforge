@@ -16,9 +16,11 @@
   // The block between the two bunnyforge marker comments below is
   // managed; the marker lines themselves must not be edited. The block
   // ships OFF: every disabled line starts with "//- " — a prefix
-  // reserved for the toggle; ordinary comments use plain "//". To turn
-  // colouring on, delete every "//- " prefix. ACTIVE LEVEL: high; to
-  // switch, re-disable the high block and enable one alternate below.
+  // reserved for the toggle; ordinary comments use plain "//". Turn
+  // colouring on with `bunnyforge vscode on` (or delete every "//- "
+  // prefix by hand); `bunnyforge vscode off` re-disables it. ACTIVE
+  // LEVEL: high; to switch, re-disable the high block and enable one
+  // alternate below.
   // bunnyforge:begin visibility-colouring
   //- "highlight.regexes": {
     //- "^(visibility:\\s*gm-only\\s*)$": {

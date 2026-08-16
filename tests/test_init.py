@@ -407,16 +407,14 @@ class TestWhatInitWrites(unittest.TestCase):
             self.assertIn(pointer, result.stdout)
             self.assertTrue((target / pointer).is_file())
 
-    def test_points_at_the_inert_vscode_scaffold_once(self):
-        # One line, not a paragraph (#34) — and command-neutral: the
-        # `bunnyforge vscode` command does not exist until #33.
+    def test_points_at_the_vscode_command_once(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(
                 init.main([str(tmp / "new"), "--name", "X"]), 0)
         pointing = [l for l in out.getvalue().splitlines()
-                    if ".vscode/settings.json" in l]
+                    if "bunnyforge vscode" in l]
         self.assertEqual(len(pointing), 1, out.getvalue())
 
     def test_does_not_write_reanchor_txt(self):
