@@ -290,3 +290,109 @@ class TestVersions(unittest.TestCase):
                                return_value=_proc("", 1, "boom")):
             with self.assertRaises(vscode.VscodeError):
                 vscode.installed_version(editor)
+
+
+RELEASE_JSON = json.dumps({
+    "tag_name": "v0.2.0",
+    "assets": [
+        {"name": "notes.txt", "browser_download_url": "u1", "size": 1},
+        {"name": "bunnyforge-visibility-preview-0.2.0.vsix",
+         "browser_download_url": "https://example.invalid/x.vsix",
+         "size": 4,
+         "digest": "sha256:" + __import__("hashlib")
+             .sha256(b"vsix").hexdigest()},
+    ],
+}).encode("utf-8")
+
+
+class TestReleaseClient(unittest.TestCase):
+
+    def test_parses_tag_asset_size_and_digest(self):
+        release = vscode.latest_release(fetch=lambda url: RELEASE_JSON)
+        self.assertEqual(release.version, (0, 2, 0))
+        self.assertEqual(release.tag, "v0.2.0")
+        self.assertEqual(release.vsix_name,
+                         "bunnyforge-visibility-preview-0.2.0.vsix")
+        self.assertEqual(release.size, 4)
+        self.assertEqual(len(release.sha256), 64)
+
+    def test_a_missing_digest_is_tolerated(self):
+        data = json.loads(RELEASE_JSON)
+        del data["assets"][1]["digest"]
+        release = vscode.latest_release(
+            fetch=lambda url: json.dumps(data).encode())
+        self.assertIsNone(release.sha256)
+
+    def test_no_vsix_asset_is_an_error(self):
+        data = json.loads(RELEASE_JSON)
+        data["assets"] = data["assets"][:1]
+        with self.assertRaises(vscode.VscodeError):
+            vscode.latest_release(fetch=lambda url: json.dumps(data).encode())
+
+    def test_network_failure_degrades_to_a_named_error(self):
+        def down(url):
+            raise OSError("no route to host")
+        with self.assertRaises(vscode.VscodeError) as ctx:
+            vscode.latest_release(fetch=down)
+        self.assertIn("GitHub", str(ctx.exception))
+
+
+class TestCache(unittest.TestCase):
+
+    def test_cache_dir_per_platform(self):
+        home = Path.home()
+        self.assertEqual(
+            vscode.cache_dir(platform="darwin", environ={}),
+            home / "Library" / "Caches" / "bunnyforge" / "vsix")
+        self.assertEqual(
+            vscode.cache_dir(platform="linux",
+                             environ={"XDG_CACHE_HOME": "/xdg"}),
+            Path("/xdg") / "bunnyforge" / "vsix")
+        self.assertEqual(
+            vscode.cache_dir(platform="linux", environ={}),
+            home / ".cache" / "bunnyforge" / "vsix")
+        self.assertEqual(
+            vscode.cache_dir(platform="win32",
+                             environ={"LOCALAPPDATA": r"C:\U\l"}),
+            Path(r"C:\U\l") / "bunnyforge" / "vsix")
+
+    def _release(self):
+        return vscode.latest_release(fetch=lambda url: RELEASE_JSON)
+
+    def test_downloads_verifies_and_caches(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            return b"vsix"
+
+        with mock.patch.object(vscode, "cache_dir", return_value=tmp):
+            path = vscode.obtain_vsix(self._release(), fetch=fetch)
+            self.assertEqual(path.read_bytes(), b"vsix")
+            # second run: cache hit, no re-download
+            vscode.obtain_vsix(self._release(), fetch=fetch)
+        self.assertEqual(calls, ["https://example.invalid/x.vsix"])
+
+    def test_a_truncated_download_never_lands_in_the_cache(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.object(vscode, "cache_dir", return_value=tmp):
+            with self.assertRaises(vscode.VscodeError):
+                vscode.obtain_vsix(self._release(), fetch=lambda url: b"vs")
+        self.assertEqual(list(tmp.iterdir()), [])
+
+    def test_a_digest_mismatch_never_lands_in_the_cache(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.object(vscode, "cache_dir", return_value=tmp):
+            with self.assertRaises(vscode.VscodeError):
+                vscode.obtain_vsix(self._release(), fetch=lambda url: b"eviL")
+        self.assertEqual(list(tmp.iterdir()), [])
+
+    def test_a_corrupt_cached_file_is_re_downloaded(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        release = self._release()
+        stale = tmp / f"{release.tag}-{release.vsix_name}"
+        stale.write_bytes(b"junk-of-wrong-size")
+        with mock.patch.object(vscode, "cache_dir", return_value=tmp):
+            path = vscode.obtain_vsix(release, fetch=lambda url: b"vsix")
+        self.assertEqual(path.read_bytes(), b"vsix")

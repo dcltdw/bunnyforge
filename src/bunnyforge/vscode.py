@@ -353,3 +353,100 @@ def installed_version(editor: Editor,
         if name.strip().lower() == extension_id:
             return parse_version(version)
     return None
+
+
+# ── The release feed and the .vsix cache ────────────────────────────────
+
+class Release(NamedTuple):
+    version: tuple[int, ...]
+    tag: str
+    vsix_name: str
+    url: str
+    size: int
+    sha256: str | None      # release assets predating GitHub digests: None
+
+
+def _fetch(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "bunnyforge",
+        "Accept": "application/vnd.github+json",
+    })
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        return response.read()
+
+
+def latest_release(fetch=_fetch) -> Release:
+    """The newest release (decision 2: no pinning) from the pinned repo.
+
+    Unauthenticated: 60 requests/hour is ample for a human-driven command,
+    but offline or rate-limited must degrade to a clear error the caller
+    can choose to swallow (status) or surface (install)."""
+    try:
+        raw = fetch(RELEASES_URL)
+    except OSError as exc:
+        raise VscodeError(
+            f"couldn't reach GitHub for the latest release ({exc}) — "
+            f"check the network and retry") from exc
+    data = json.loads(raw)
+    asset = next((a for a in data.get("assets", [])
+                  if a.get("name", "").endswith(".vsix")), None)
+    if asset is None:
+        raise VscodeError(
+            f"release {data.get('tag_name', '?')} of {EXTENSION_REPO} has "
+            f"no .vsix asset — report it at "
+            f"https://github.com/{EXTENSION_REPO}/issues")
+    digest = asset.get("digest") or ""
+    return Release(
+        version=parse_version(data["tag_name"]),
+        tag=data["tag_name"],
+        vsix_name=asset["name"],
+        url=asset["browser_download_url"],
+        size=asset["size"],
+        sha256=digest.removeprefix("sha256:") if digest.startswith("sha256:")
+               else None)
+
+
+def cache_dir(platform=sys.platform, environ=os.environ) -> Path:
+    if platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    elif platform.startswith("win"):
+        base = Path(environ.get("LOCALAPPDATA")
+                    or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(environ.get("XDG_CACHE_HOME")
+                    or Path.home() / ".cache")
+    return base / "bunnyforge" / "vsix"
+
+
+def _matches(data: bytes, release: Release) -> bool:
+    if len(data) != release.size:
+        return False
+    if release.sha256 is None:
+        return True
+    return hashlib.sha256(data).hexdigest() == release.sha256
+
+
+def obtain_vsix(release: Release, fetch=_fetch) -> Path:
+    """A verified .vsix on disk: the cache if it checks out, else a fresh
+    download — verified BEFORE it lands in the cache, so a truncated or
+    tampered file is never present to be installed later."""
+    dest = cache_dir() / f"{release.tag}-{release.vsix_name}"
+    if dest.is_file() and _matches(dest.read_bytes(), release):
+        return dest
+    try:
+        data = fetch(release.url)
+    except OSError as exc:
+        raise VscodeError(
+            f"downloading {release.vsix_name} failed ({exc}) — check the "
+            f"network and retry") from exc
+    if len(data) != release.size:
+        raise VscodeError(
+            f"download of {release.vsix_name} is {len(data)} bytes; the "
+            f"release says {release.size} — truncated, not installing")
+    if release.sha256 and hashlib.sha256(data).hexdigest() != release.sha256:
+        raise VscodeError(
+            f"download of {release.vsix_name} does not match the release "
+            f"digest — not installing")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return dest
