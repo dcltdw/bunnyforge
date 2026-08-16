@@ -237,3 +237,119 @@ def adopt_key(lines: list[str], key_idx: int) -> list[str]:
 
 def replace_region(lines: list[str], begin: int, end: int) -> list[str]:
     return lines[:begin] + packaged_region_lines() + lines[end + 1:]
+
+
+# ── Editors ─────────────────────────────────────────────────────────────
+# Stable first: it is the tested editor and every default resolves to it.
+# The rest are offered because sideloading a .vsix is exactly how the
+# non-Marketplace editors install things (decision 3) — but they are
+# untested, and every mention of them says so.
+_EDITORS = (
+    ("code", "Visual Studio Code", True),
+    ("code-insiders", "VS Code Insiders", False),
+    ("codium", "VSCodium", False),
+    ("cursor", "Cursor", False),
+)
+
+# PATH is searched first everywhere; these app-bundle paths cover the one
+# platform whose installer does NOT put the CLI on PATH (macOS — the
+# machine this was developed on had `which code` fail with the binary at
+# this exact path). Windows and Linux installers put the CLI on PATH by
+# default, so PATH is their discovery.
+_MAC_APPS = {
+    "code": ("/Applications/Visual Studio Code.app"
+             "/Contents/Resources/app/bin/code"),
+    "code-insiders": ("/Applications/Visual Studio Code - Insiders.app"
+                      "/Contents/Resources/app/bin/code-insiders"),
+    "codium": "/Applications/VSCodium.app/Contents/Resources/app/bin/codium",
+    "cursor": "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+}
+
+
+class Editor(NamedTuple):
+    cli_id: str
+    label: str
+    path: str
+    supported: bool
+
+
+def _run(argv: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, capture_output=True, text=True)
+
+
+def _interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _ask(prompt: str) -> str:
+    return input(prompt)
+
+
+def discover_editors(which=shutil.which, platform=sys.platform,
+                     exists=lambda p: Path(p).is_file()) -> list[Editor]:
+    found = []
+    for cli_id, label, supported in _EDITORS:
+        path = which(cli_id)
+        if path is None and platform == "darwin" and exists(_MAC_APPS[cli_id]):
+            path = _MAC_APPS[cli_id]
+        if path:
+            found.append(Editor(cli_id, label, path, supported))
+    return found
+
+
+def pick_editor(editors: list[Editor], wanted: str | None) -> Editor:
+    if wanted:
+        match = next((e for e in editors if e.cli_id == wanted), None)
+        if match is None:
+            raise VscodeError(
+                f"--editor {wanted}: not found (found: "
+                f"{', '.join(e.cli_id for e in editors) or 'none'})")
+        return match
+    if not editors:
+        raise VscodeError(
+            "no editor CLI found on PATH or in known locations — in VS "
+            "Code, run \"Shell Command: Install 'code' command in PATH\" "
+            "from the Command Palette, then re-run")
+    if len(editors) == 1:
+        return editors[0]
+    stable = next((e for e in editors if e.cli_id == "code"), None)
+    if not _interactive():
+        if stable:
+            return stable
+        raise VscodeError(
+            "several editors found and no terminal to ask — pass "
+            "--editor " + "|".join(e.cli_id for e in editors))
+    print("several editors found:")
+    for n, e in enumerate(editors, 1):
+        note = "" if e.supported else "  (untested — may have bugs)"
+        print(f"  [{n}] {e.label}{note}")
+    default = editors.index(stable) + 1 if stable else 1
+    answer = _ask(f"install into [{default}]: ").strip()
+    if answer.isdigit() and 1 <= int(answer) <= len(editors):
+        return editors[int(answer) - 1]
+    return editors[default - 1]
+
+
+# ── Versions ────────────────────────────────────────────────────────────
+
+def parse_version(text: str) -> tuple[int, ...]:
+    body = text.strip().removeprefix("v")
+    try:
+        return tuple(int(part) for part in body.split("."))
+    except ValueError:
+        raise VscodeError(f"unparseable version {text!r}") from None
+
+
+def installed_version(editor: Editor,
+                      extension_id: str = EXTENSION_ID
+                      ) -> tuple[int, ...] | None:
+    proc = _run([editor.path, "--list-extensions", "--show-versions"])
+    if proc.returncode != 0:
+        raise VscodeError(
+            f"{editor.cli_id} --list-extensions failed: "
+            f"{proc.stderr.strip() or proc.returncode}")
+    for line in proc.stdout.splitlines():
+        name, _, version = line.partition("@")
+        if name.strip().lower() == extension_id:
+            return parse_version(version)
+    return None

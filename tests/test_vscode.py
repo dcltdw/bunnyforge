@@ -208,3 +208,85 @@ class TestStructuralEdits(unittest.TestCase):
         nbegin, nend = vscode.maybe_region(out)
         self.assertEqual(out[nbegin:nend + 1], vscode.packaged_region_lines())
         self.assertEqual(out[:nbegin], SAMPLE_OFF[:begin])   # outside kept
+
+
+def _proc(stdout="", returncode=0, stderr=""):
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+class TestEditorDiscovery(unittest.TestCase):
+
+    def test_finds_editors_on_path_in_stable_first_order(self):
+        which = {"code": "/usr/bin/code", "cursor": "/usr/bin/cursor"}.get
+        found = vscode.discover_editors(which=which, platform="linux")
+        self.assertEqual([(e.cli_id, e.supported) for e in found],
+                         [("code", True), ("cursor", False)])
+
+    def test_falls_back_to_the_mac_app_bundle(self):
+        mac = ("/Applications/Visual Studio Code.app/Contents/Resources"
+               "/app/bin/code")
+        found = vscode.discover_editors(
+            which=lambda _: None, platform="darwin",
+            exists=lambda p: p == mac)
+        self.assertEqual([e.path for e in found], [mac])
+
+    def test_pick_honours_the_flag_and_rejects_unknown(self):
+        editors = [vscode.Editor("code", "Visual Studio Code",
+                                 "/usr/bin/code", True)]
+        self.assertEqual(vscode.pick_editor(editors, "code"), editors[0])
+        with self.assertRaises(vscode.VscodeError):
+            vscode.pick_editor(editors, "codium")
+
+    def test_pick_with_none_found_names_the_command_palette(self):
+        with self.assertRaises(vscode.VscodeError) as ctx:
+            vscode.pick_editor([], None)
+        self.assertIn("Shell Command", str(ctx.exception))
+
+    def test_pick_defaults_to_stable_without_a_tty(self):
+        editors = [
+            vscode.Editor("code", "Visual Studio Code", "/u/code", True),
+            vscode.Editor("cursor", "Cursor", "/u/cursor", False),
+        ]
+        with mock.patch.object(vscode, "_interactive", return_value=False):
+            self.assertEqual(vscode.pick_editor(editors, None).cli_id, "code")
+
+    def test_pick_without_stable_and_no_tty_names_the_flag(self):
+        editors = [vscode.Editor("cursor", "Cursor", "/u/cursor", False),
+                   vscode.Editor("codium", "VSCodium", "/u/codium", False)]
+        with mock.patch.object(vscode, "_interactive", return_value=False):
+            with self.assertRaises(vscode.VscodeError) as ctx:
+                vscode.pick_editor(editors, None)
+        self.assertIn("--editor", str(ctx.exception))
+
+
+class TestVersions(unittest.TestCase):
+
+    def test_parse_version_accepts_v_prefix(self):
+        self.assertEqual(vscode.parse_version("v0.1.0"), (0, 1, 0))
+        self.assertEqual(vscode.parse_version("0.10.2"), (0, 10, 2))
+
+    def test_parse_version_refuses_garbage(self):
+        with self.assertRaises(vscode.VscodeError):
+            vscode.parse_version("latest")
+
+    def test_installed_version_parses_the_listing(self):
+        editor = vscode.Editor("code", "VS Code", "/u/code", True)
+        listing = ("other.extension@9.9.9\n"
+                   "dcltdw.bunnyforge-visibility-preview@0.1.0\n")
+        with mock.patch.object(vscode, "_run",
+                               return_value=_proc(listing)) as run:
+            self.assertEqual(vscode.installed_version(editor), (0, 1, 0))
+        run.assert_called_once_with(
+            ["/u/code", "--list-extensions", "--show-versions"])
+
+    def test_installed_version_none_when_absent(self):
+        editor = vscode.Editor("code", "VS Code", "/u/code", True)
+        with mock.patch.object(vscode, "_run", return_value=_proc("a@1\n")):
+            self.assertIsNone(vscode.installed_version(editor))
+
+    def test_installed_version_surfaces_a_failing_cli(self):
+        editor = vscode.Editor("code", "VS Code", "/u/code", True)
+        with mock.patch.object(vscode, "_run",
+                               return_value=_proc("", 1, "boom")):
+            with self.assertRaises(vscode.VscodeError):
+                vscode.installed_version(editor)
