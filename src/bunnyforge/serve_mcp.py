@@ -11,12 +11,13 @@ function bodies. cli.py imports every subcommand module unconditionally: a
 bare Python must be able to import this one, print its --help, and get a
 friendly install hint, with no other subcommand affected.
 
-Everything served here is GM-eyes-only, so auth is default-deny: no token
-and no explicit --no-auth means the server refuses to start. _BearerAuth is
-deliberately pure ASGI rather than starlette middleware — it must work
-whatever the SDK builds its app from, and it is short enough to read in one
-sitting, which is what you want of the only thing between a tunnel and the
-campaign's secrets.
+Everything served here is GM-eyes-only, so auth is default-deny: no GM key
+and no explicit --no-auth means the server refuses to start. Auth itself is
+delegated to the SDK (design: docs/superpowers/specs/
+2026-08-16-serve-mcp-oauth-design.md): bunnyforge runs the smallest OAuth
+authorization server that satisfies claude.ai's connector — SDK handlers
+for registration, authorize, and token; bunnyforge owns one decision, a
+consent page checking a pre-shared GM key (_mcp_auth.py).
 
 Publishing is structurally absent, not merely forbidden: no tool here
 touches Export/ or the wiki, so a remote agent cannot leak GM material to
@@ -33,7 +34,7 @@ from bunnyforge import _config
 from bunnyforge._config import ConfigError, WorkspaceError
 from bunnyforge._store import StoreError, WorkspaceStore
 
-TOKEN_ENV = "BUNNYFORGE_MCP_TOKEN"
+KEY_ENV = "BUNNYFORGE_MCP_KEY"
 
 # Workspace doctrine, offered as MCP resources so a fresh conversation can
 # load the house rules before it writes anything. Absent files are simply
@@ -44,35 +45,18 @@ _INSTALL_HINT = ("serve-mcp needs its optional dependencies:\n"
                  "  pip install 'bunnyforge[mcp]'")
 
 
-class _BearerAuth:
-    """Require `Authorization: Bearer <token>` on every HTTP request.
-
-    Non-HTTP scopes (lifespan) pass through untouched: they carry no headers,
-    and answering them with 401 would stop the app from starting.
-    """
-
-    def __init__(self, app, token: str):
-        self._app = app
-        self._expected = f"Bearer {token}".encode()
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            headers = {k.lower(): v for k, v in scope.get("headers") or []}
-            if headers.get(b"authorization") != self._expected:
-                await send({"type": "http.response.start", "status": 401,
-                            "headers": [(b"content-type", b"text/plain"),
-                                        (b"www-authenticate", b"Bearer")]})
-                await send({"type": "http.response.body",
-                            "body": b"unauthorized"})
-                return
-        await self._app(scope, receive, send)
-
-
-def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False):
+def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
+                 oauth=None):
     """Assemble the MCP server over one workspace store.
 
     Imports the SDK, so a caller without the extra gets ModuleNotFoundError;
     main() translates that into the install hint.
+
+    With `oauth` (a SingleUserOAuthProvider), the SDK mounts the OAuth
+    bootstrap routes publicly and guards /mcp — passing the provider alone
+    is deliberate: MCPServer refuses a provider AND a token_verifier, and
+    wraps the provider in its own ProviderTokenVerifier. With oauth=None
+    the app is unauthenticated (--no-auth semantics).
 
     Tool docstrings are not decoration — they are what the remote agent reads
     to decide whether to call a tool, so they say when to use it, not merely
@@ -80,7 +64,25 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False):
     """
     from mcp.server import MCPServer
 
-    server = MCPServer("bunnyforge")
+    if oauth is None:
+        server = MCPServer("bunnyforge")
+    else:
+        from mcp.server.auth.settings import (AuthSettings,
+                                              ClientRegistrationOptions)
+        from bunnyforge._mcp_auth import consent_endpoint
+
+        server = MCPServer(
+            "bunnyforge",
+            auth_server_provider=oauth,
+            auth=AuthSettings(
+                issuer_url=oauth.issuer_url,
+                resource_server_url=f"{oauth.issuer_url}/mcp",
+                client_registration_options=ClientRegistrationOptions(
+                    enabled=True),
+            ),
+        )
+        server.custom_route("/consent", methods=["GET", "POST"])(
+            consent_endpoint(oauth, store.ws.config.name))
 
     @server.tool()
     def campaign_overview() -> dict:
@@ -145,9 +147,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "through a tunnel, not by binding wider)")
     parser.add_argument("--port", type=int, default=8765,
                         help="bind port (default: %(default)s)")
-    parser.add_argument("--token",
-                        help=f"bearer token, or set {TOKEN_ENV}; required "
-                             "unless --no-auth")
+    parser.add_argument("--auth-key",
+                        help="pre-shared GM key typed on the OAuth consent "
+                             f"page, or set {KEY_ENV}; required unless "
+                             "--no-auth")
+    parser.add_argument("--public-host",
+                        help="public hostname the tunnel serves this host "
+                             "as; the OAuth issuer becomes https://HOST "
+                             "(default: the local bind address)")
     parser.add_argument("--no-auth", action="store_true",
                         help="serve with no authentication — local testing "
                              "only; everything served is GM-only material")
@@ -166,28 +173,46 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    token = (args.token or os.environ.get(TOKEN_ENV, "")).strip()
-    if not token and not args.no_auth:
-        print("refusing to start without auth: pass --token, set "
-              f"{TOKEN_ENV}, or (local testing only) pass --no-auth",
+    key = (args.auth_key or os.environ.get(KEY_ENV, "")).strip()
+    if key and args.no_auth:
+        print(f"--no-auth contradicts --auth-key/{KEY_ENV}; pick one",
+              file=sys.stderr)
+        return 1
+    if not key and not args.no_auth:
+        print("refusing to start without auth: pass --auth-key, set "
+              f"{KEY_ENV}, or (local testing only) pass --no-auth",
               file=sys.stderr)
         return 1
 
+    # Issue #46 will also plumb --public-host into transport_security;
+    # here it only names the OAuth issuer.
+    issuer = (f"https://{args.public_host}" if args.public_host
+              else f"http://127.0.0.1:{args.port}")
+
     try:
         import uvicorn
+
+        oauth = None
+        if key:
+            from bunnyforge._mcp_auth import (SingleUserOAuthProvider,
+                                              default_state_path)
+            oauth = SingleUserOAuthProvider(
+                gm_key=key, issuer_url=issuer,
+                state_path=default_state_path())
         server = build_server(WorkspaceStore(ws),
-                              allow_direct_edits=args.allow_direct_edits)
+                              allow_direct_edits=args.allow_direct_edits,
+                              oauth=oauth)
     except ModuleNotFoundError:
         print(_INSTALL_HINT, file=sys.stderr)
         return 1
 
     app = server.streamable_http_app(stateless_http=True)
-    if token:
-        app = _BearerAuth(app, token)
-    else:
+    if not key:
         print("WARNING: serving with no authentication", file=sys.stderr)
 
-    print(f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp")
+    print(f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp "
+          f"(OAuth issuer: {issuer})" if key else
+          f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 

@@ -82,6 +82,10 @@ implements the same interface.
 
 ## Deployment and auth
 
+> **Superseded (2026-08-16):** the static-bearer-token scheme below was
+> disproved against the real claude.ai connector (issue #42). Current
+> design: `2026-08-16-serve-mcp-oauth-design.md`.
+
 - The server binds localhost; reaching it from claude.ai is the tunnel's
   job. Bunnyforge documents the Tailscale Funnel / cloudflared recipe but
   does not manage tunnels.

@@ -1,4 +1,7 @@
+import contextlib
 import importlib.util
+import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,70 +34,6 @@ def scaffold(case: unittest.TestCase) -> _store.WorkspaceStore:
     return _store.WorkspaceStore(_config.open_workspace(root))
 
 
-class TestBearerAuth(unittest.IsolatedAsyncioTestCase):
-    """Pure ASGI, so this runs without the mcp extra installed."""
-
-    async def _call(self, auth, headers):
-        sent = []
-
-        async def send(message):
-            sent.append(message)
-
-        await auth({"type": "http", "headers": headers}, None, send)
-        return sent
-
-    async def test_missing_token_is_401_and_never_reaches_the_app(self):
-        async def inner(scope, receive, send):
-            raise AssertionError("unauthenticated request reached the app")
-
-        sent = await self._call(serve_mcp._BearerAuth(inner, "sekrit"), [])
-        self.assertEqual(sent[0]["status"], 401)
-
-    async def test_wrong_token_is_401(self):
-        async def inner(scope, receive, send):
-            raise AssertionError("unauthenticated request reached the app")
-
-        sent = await self._call(serve_mcp._BearerAuth(inner, "sekrit"),
-                                [(b"authorization", b"Bearer wrong")])
-        self.assertEqual(sent[0]["status"], 401)
-
-    async def test_near_miss_token_is_401(self):
-        # A prefix of the real token must not pass: the comparison is of the
-        # whole header value, not a startswith.
-        async def inner(scope, receive, send):
-            raise AssertionError("unauthenticated request reached the app")
-
-        sent = await self._call(serve_mcp._BearerAuth(inner, "sekrit"),
-                                [(b"authorization", b"Bearer sek")])
-        self.assertEqual(sent[0]["status"], 401)
-
-    async def test_right_token_passes_through(self):
-        seen = []
-
-        async def inner(scope, receive, send):
-            seen.append(scope)
-
-        await self._call(serve_mcp._BearerAuth(inner, "sekrit"),
-                         [(b"authorization", b"Bearer sekrit")])
-        self.assertEqual(len(seen), 1)
-
-    async def test_non_http_scope_passes_through_untouched(self):
-        # Lifespan events carry no headers and must not be answered with 401,
-        # or the app never starts.
-        seen = []
-
-        async def inner(scope, receive, send):
-            seen.append(scope)
-
-        await self._call(serve_mcp._BearerAuth(inner, "sekrit"),
-                         [])  # headers ignored for a lifespan scope
-        self.assertEqual(len(seen), 0)  # the http scope above was rejected
-
-        auth = serve_mcp._BearerAuth(inner, "sekrit")
-        await auth({"type": "lifespan"}, None, None)
-        self.assertEqual(len(seen), 1)
-
-
 class TestMainGuards(unittest.TestCase):
     """argparse and the refusals — no mcp extra needed for any of these."""
 
@@ -108,15 +47,51 @@ class TestMainGuards(unittest.TestCase):
             serve_mcp.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
 
-    def test_refuses_to_start_without_token_or_no_auth(self):
-        # A token in the invoking environment must not leak into the test.
-        with mock.patch.dict("os.environ", {serve_mcp.TOKEN_ENV: ""}):
-            self.assertEqual(
-                serve_mcp.main(["--workspace", str(self._ws())]), 1)
-
     def test_bad_workspace_is_one_error_line_not_a_traceback(self):
         empty = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.assertEqual(serve_mcp.main(["--workspace", str(empty)]), 1)
+
+
+class TestStartupContract(unittest.TestCase):
+    """Default-deny: the spec's startup matrix, refusal rows.
+
+    These run on bare Python: every refusal fires before the SDK import.
+    """
+
+    def setUp(self):
+        store = scaffold(self)
+        self.ws_args = ["--workspace", str(store.ws.root)]
+        self.enterContext(mock.patch.dict(
+            os.environ, {"BUNNYFORGE_MCP_KEY": ""}))
+
+    def _main(self, extra):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = serve_mcp.main(self.ws_args + extra)
+        return rc, stderr.getvalue()
+
+    def test_refuses_without_key_or_no_auth(self):
+        rc, err = self._main([])
+        self.assertEqual(rc, 1)
+        self.assertIn("--auth-key", err)
+        self.assertIn("BUNNYFORGE_MCP_KEY", err)
+        self.assertIn("--no-auth", err)
+
+    def test_refuses_key_and_no_auth_together(self):
+        rc, err = self._main(["--auth-key", "k", "--no-auth"])
+        self.assertEqual(rc, 1)
+        self.assertIn("contradict", err)
+
+    def test_env_key_counts_as_key_for_the_contradiction(self):
+        with mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": "k"}):
+            rc, err = self._main(["--no-auth"])
+        self.assertEqual(rc, 1)
+        self.assertIn("contradict", err)
+
+    def test_token_flag_is_gone(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                serve_mcp.build_parser().parse_args(["--token", "t"])
 
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
@@ -192,11 +167,10 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         uris = {str(r.uri) for r in await server.list_resources()}
         self.assertNotIn("bunnyforge://doctrine/situation-design.md", uris)
 
-    async def test_streamable_app_is_asgi_and_wrappable(self):
+    async def test_streamable_app_is_asgi(self):
         server = serve_mcp.build_server(scaffold(self))
         app = server.streamable_http_app(stateless_http=True)
         self.assertTrue(callable(app))
-        self.assertTrue(callable(serve_mcp._BearerAuth(app, "t")))
 
 
 if __name__ == "__main__":
