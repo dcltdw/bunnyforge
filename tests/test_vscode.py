@@ -109,3 +109,102 @@ class TestRegionEngine(unittest.TestCase):
         copy = list(SAMPLE_OFF)
         vscode.enable_region(SAMPLE_OFF, begin, end)
         self.assertEqual(SAMPLE_OFF, copy)
+
+
+UNMANAGED = """\
+{
+  "editor.rulers": [80],
+  "highlight.regexes": {
+    "^(## GM notes{2}\\\\s*)$": {
+      "decorations": [{ "quote": "}" }]
+    }
+  },
+  "markdown.preview.frontMatter": "table"
+}
+""".split("\n")
+
+
+class TestStructuralEdits(unittest.TestCase):
+
+    def test_key_span_ignores_braces_in_strings_and_comments(self):
+        # The value spans lines 2..6; "{2}" and the "}" string literal and
+        # any // comment must not confuse the scan.
+        self.assertEqual(vscode.key_span(UNMANAGED, 2), 6)
+
+    def test_key_span_on_a_single_line_value(self):
+        doc = ['{', '  "highlight.regexes": {},', '}']
+        self.assertEqual(vscode.key_span(doc, 1), 1)
+
+    def test_key_span_refuses_unbalanced_braces(self):
+        with self.assertRaises(vscode.VscodeError):
+            vscode.key_span(['{', '  "highlight.regexes": {', ''], 1)
+
+    def test_finds_the_unmanaged_key_and_skips_comments(self):
+        self.assertEqual(vscode.find_unmanaged_key(UNMANAGED, None), 2)
+        commented = ['{', '  // "highlight.regexes": {}', '}']
+        self.assertIsNone(vscode.find_unmanaged_key(commented, None))
+
+    def test_the_managed_region_is_not_reported_as_unmanaged(self):
+        begin, end = vscode.maybe_region(SAMPLE_OFF)
+        on = vscode.enable_region(SAMPLE_OFF, begin, end)
+        self.assertIsNone(vscode.find_unmanaged_key(on, (begin, end)))
+
+    def test_packaged_region_lines_are_marker_delimited(self):
+        region = vscode.packaged_region_lines()
+        self.assertEqual(region[0].strip(), vscode.MARKER_BEGIN)
+        self.assertEqual(region[-1].strip(), vscode.MARKER_END)
+
+    def _spliced_json(self, doc, *, enabled=True):
+        """Splice, optionally enable, then parse as strict JSON — the
+        property that actually matters in both toggle states."""
+        out = vscode.splice_region(doc)
+        begin, end = vscode.maybe_region(out)
+        lines = vscode.enable_region(out, begin, end) if enabled else out
+        return out, json.loads("\n".join(
+            l for l in lines if not l.strip().startswith("//")))
+
+    def test_splice_puts_the_region_first_and_keeps_the_file_valid(self):
+        doc = ['{', '  // a comment', '  "editor.rulers": [80]', '}', '']
+        out, data = self._spliced_json(doc)
+        begin, _ = vscode.maybe_region(out)
+        self.assertEqual(begin, 1)                  # first member, not last
+        self.assertIn("highlight.regexes", data)
+        self.assertEqual(data["editor.rulers"], [80])
+        # and the off state parses too — the region is all comments there
+        self.assertEqual(self._spliced_json(doc, enabled=False)[1],
+                         {"editor.rulers": [80]})
+
+    def test_splice_into_an_empty_object_needs_no_comma(self):
+        # Sole member: the region's own trailing comma has to go, or the
+        # enabled file ends `},}`.
+        _, data = self._spliced_json(['{', '}'])
+        self.assertEqual(list(data), ["highlight.regexes"])
+
+    def test_splice_drops_a_dangling_comma_from_the_last_member(self):
+        # cmd_on's replace path deletes the unmanaged key before splicing;
+        # if that key was last, the member before it keeps its comma.
+        _, data = self._spliced_json(['{', '  "editor.rulers": [80],', '}'])
+        self.assertEqual(data["editor.rulers"], [80])
+        self.assertIn("highlight.regexes", data)
+
+    def test_splice_refuses_a_file_with_no_closing_brace(self):
+        with self.assertRaises(vscode.VscodeError):
+            vscode.splice_region(['not a settings object'])
+
+    def test_adopt_brackets_the_minimum_span(self):
+        out = vscode.adopt_key(UNMANAGED, 2)
+        begin, end = vscode.maybe_region(out)
+        self.assertEqual(out[begin].strip(), vscode.MARKER_BEGIN)
+        self.assertEqual(out[begin + 1], UNMANAGED[2])   # content untouched
+        self.assertEqual(out[end - 1], UNMANAGED[6])
+        self.assertEqual(vscode.region_state(out, begin, end), "on")
+        # everything outside the span is byte-identical
+        self.assertEqual(out[:begin], UNMANAGED[:2])
+        self.assertEqual(out[end + 1:], UNMANAGED[7:])
+
+    def test_replace_swaps_region_content_for_packaged(self):
+        begin, end = vscode.maybe_region(SAMPLE_OFF)
+        out = vscode.replace_region(SAMPLE_OFF, begin, end)
+        nbegin, nend = vscode.maybe_region(out)
+        self.assertEqual(out[nbegin:nend + 1], vscode.packaged_region_lines())
+        self.assertEqual(out[:nbegin], SAMPLE_OFF[:begin])   # outside kept

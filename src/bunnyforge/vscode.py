@@ -125,3 +125,115 @@ def disable_region(lines: list[str], begin: int, end: int) -> list[str]:
         if body and not body.startswith("//"):
             out[i] = indent + OFF_PREFIX + body
     return out
+
+
+# ── Structural edits: create, adopt, replace ────────────────────────────
+
+def key_span(lines: list[str], start: int) -> int:
+    """Last line index of the JSON value opened on lines[start].
+
+    A character scan tracking string state (so braces inside regex keys
+    and string values don't count) and line comments, balancing {}/[].
+    """
+    depth = 0
+    opened = False
+    for i in range(start, len(lines)):
+        line = lines[i]
+        in_string = False
+        j = 0
+        while j < len(line):
+            ch = line[j]
+            if in_string:
+                if ch == "\\":
+                    j += 1
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif line[j:j + 2] == "//":
+                break
+            elif ch in "{[":
+                depth += 1
+                opened = True
+            elif ch in "}]":
+                depth -= 1
+            j += 1
+        if opened and depth <= 0:
+            return i
+    raise VscodeError(
+        f'the "highlight.regexes" value in {SETTINGS_REL} never closes '
+        f"its braces — fix the file by hand, then re-run")
+
+
+def find_unmanaged_key(lines: list[str],
+                       region: tuple[int, int] | None) -> int | None:
+    """A live top-level "highlight.regexes" outside the managed region —
+    the duplicate-key hazard: appending a second copy would be a silent
+    last-one-wins that clobbers whatever the user tuned."""
+    for i, line in enumerate(lines):
+        if region and region[0] <= i <= region[1]:
+            continue
+        if line.strip().startswith('"highlight.regexes"'):
+            return i
+    return None
+
+
+def packaged_region_lines() -> list[str]:
+    lines = (init.packaged_bytes("vscode/settings.json")
+             .decode("utf-8").split("\n"))
+    begin, end = maybe_region(lines)  # never None: the drift test pins it
+    return lines[begin:end + 1]
+
+
+def splice_region(lines: list[str]) -> list[str]:
+    """Insert the packaged managed region as the object's FIRST member.
+
+    Region-first is the contract's own placement (#34 item 3): the packaged
+    region ends `//- },` because a member follows it there, so splicing it
+    last would leave a trailing comma and invalid JSON. Comma normalisation
+    either side of the region is the one sanctioned edit outside the markers,
+    and it happens only here, at creation.
+    """
+    opens = next((i for i, l in enumerate(lines)
+                  if l.strip().endswith("{")), None)
+    close = next((i for i in range(len(lines) - 1, -1, -1)
+                  if lines[i].strip() == "}"), None)
+    if opens is None or close is None or close <= opens:
+        raise VscodeError(
+            f"{SETTINGS_REL} is not a settings object this tool can edit "
+            f"(no opening or closing brace on a line of its own) — fix or "
+            f"remove the file, then re-run")
+    region = packaged_region_lines()
+    out = lines[:opens + 1] + region + lines[opens + 1:]
+    region_end = opens + len(region)
+    close += len(region)
+    following = [i for i in range(region_end + 1, close)
+                 if out[i].strip() and not out[i].strip().startswith("//")]
+    if following:
+        last = following[-1]
+        if out[last].rstrip().endswith(","):
+            out[last] = out[last].rstrip()[:-1]
+    else:
+        for i in range(region_end - 1, opens, -1):
+            indent, body = _split_indent(out[i])
+            if body.startswith(OFF_PREFIX) and body.rstrip().endswith(","):
+                out[i] = indent + body.rstrip()[:-1]
+                break
+    return out
+
+
+def adopt_key(lines: list[str], key_idx: int) -> list[str]:
+    """Bracket the existing rules with the markers, content untouched —
+    the minimum span, key line through its closing brace. Nearby
+    commented-out blocks stay outside: they are comments, and `off` never
+    needs to touch them."""
+    end = key_span(lines, key_idx)
+    indent = _split_indent(lines[key_idx])[0]
+    out = list(lines)
+    out.insert(end + 1, indent + MARKER_END)
+    out.insert(key_idx, indent + MARKER_BEGIN)
+    return out
+
+
+def replace_region(lines: list[str], begin: int, end: int) -> list[str]:
+    return lines[:begin] + packaged_region_lines() + lines[end + 1:]
