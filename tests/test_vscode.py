@@ -564,3 +564,245 @@ class TestStatus(unittest.TestCase):
         self.assertIn("unknown", text)
         self.assertIn("permission denied", text)
         self.assertIn("none found", text)     # workspace half still runs
+
+
+def _ws(case) -> Path:
+    ws = Path(case.enterContext(tempfile.TemporaryDirectory())).resolve()
+    (ws / "campaign.toml").write_text(
+        '[campaign]\nnamespace = "probe"\n', encoding="utf-8")
+    return ws
+
+
+def _settings_of(ws: Path) -> list[str]:
+    return (ws / ".vscode" / "settings.json").read_text("utf-8").split("\n")
+
+
+class TestOnOff(unittest.TestCase):
+
+    def _on(self, ws, *flags):
+        with mock.patch.object(vscode, "_offer_highlight"), \
+             contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = vscode.main(["on", "--workspace", str(ws), *flags])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_on_creates_the_file_enabled_when_absent(self):
+        ws = _ws(self)
+        rc, _, _ = self._on(ws)
+        self.assertEqual(rc, 0)
+        lines = _settings_of(ws)
+        begin, end = vscode.maybe_region(lines)
+        self.assertEqual(vscode.region_state(lines, begin, end), "on")
+        # strict JSON once comments drop — the whole point of the layout
+        json.loads("\n".join(
+            l for l in lines if not l.strip().startswith("//")))
+
+    def test_on_enables_a_scaffolded_off_file(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_bytes(
+            init.packaged_bytes("vscode/settings.json"))
+        rc, _, _ = self._on(ws)
+        self.assertEqual(rc, 0)
+        lines = _settings_of(ws)
+        begin, end = vscode.maybe_region(lines)
+        self.assertEqual(vscode.region_state(lines, begin, end), "on")
+
+    def test_on_is_idempotent(self):
+        ws = _ws(self)
+        self._on(ws)
+        before = _settings_of(ws)
+        rc, out, _ = self._on(ws)
+        self.assertEqual(rc, 0)
+        self.assertIn("already on", out)
+        self.assertEqual(_settings_of(ws), before)
+
+    def test_on_replace_resets_hand_tuning(self):
+        ws = _ws(self)
+        self._on(ws)
+        lines = _settings_of(ws)
+        begin, _ = vscode.maybe_region(lines)
+        # hand-tune a colour inside the region
+        idx = next(i for i, l in enumerate(lines) if "#ff3333" in l)
+        lines[idx] = lines[idx].replace("#ff3333", "#123456")
+        (ws / ".vscode" / "settings.json").write_text(
+            "\n".join(lines), encoding="utf-8")
+        rc, _, _ = self._on(ws, "--replace")
+        self.assertEqual(rc, 0)
+        text = "\n".join(_settings_of(ws))
+        self.assertNotIn("#123456", text)
+        self.assertIn("#ff3333", text)
+
+    def test_on_without_replace_preserves_hand_tuning(self):
+        ws = _ws(self)
+        self._on(ws)
+        lines = _settings_of(ws)
+        idx = next(i for i, l in enumerate(lines) if "#ff3333" in l)
+        lines[idx] = lines[idx].replace("#ff3333", "#123456")
+        (ws / ".vscode" / "settings.json").write_text(
+            "\n".join(lines), encoding="utf-8")
+        rc, _, _ = self._on(ws)   # already on; must not touch content
+        self.assertEqual(rc, 0)
+        self.assertIn("#123456", "\n".join(_settings_of(ws)))
+
+    def test_off_disables_and_hints_at_uninstall(self):
+        ws = _ws(self)
+        self._on(ws)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["off", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        lines = _settings_of(ws)
+        begin, end = vscode.maybe_region(lines)
+        self.assertEqual(vscode.region_state(lines, begin, end), "off")
+        self.assertIn("bunnyforge vscode uninstall", out.getvalue())
+        # the pin survives off — it belongs to the preview half
+        self.assertIn('"markdown.preview.frontMatter": "table"',
+                      "\n".join(lines))
+
+    def test_off_with_no_file_is_a_named_error(self):
+        ws = _ws(self)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = vscode.main(["off", "--workspace", str(ws)])
+        self.assertEqual(rc, 1)
+        self.assertIn("error: ", err.getvalue())
+
+    def test_on_refuses_unbalanced_markers(self):
+        ws = _ws(self)
+        (ws / ".vscode").mkdir()
+        broken = [l for l in init.packaged_bytes("vscode/settings.json")
+                  .decode("utf-8").split("\n")
+                  if l.strip() != vscode.MARKER_END]
+        (ws / ".vscode" / "settings.json").write_text(
+            "\n".join(broken), encoding="utf-8")
+        rc, _, err = self._on(ws)
+        self.assertEqual(rc, 1)
+        self.assertIn("unbalanced", err)
+
+
+class TestOnConflict(unittest.TestCase):
+    """The duplicate-key hazard: a hand-rolled highlight.regexes outside
+    any markers. Never append; ask, recommending adopt (decision 6)."""
+
+    def _handrolled(self) -> Path:
+        ws = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        (ws / "campaign.toml").write_text(
+            '[campaign]\nnamespace = "probe"\n', encoding="utf-8")
+        (ws / ".vscode").mkdir()
+        (ws / ".vscode" / "settings.json").write_text(
+            '{\n'
+            '  // tuned by hand, years of care\n'
+            '  "highlight.regexes": {\n'
+            '    "^tuned$": { "regexFlags": "gm" }\n'
+            '  },\n'
+            '  "editor.rulers": [80]\n'
+            '}\n', encoding="utf-8")
+        return ws
+
+    def _on(self, ws, *flags):
+        with mock.patch.object(vscode, "_offer_highlight"), \
+             contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = vscode.main(["on", "--workspace", str(ws), *flags])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_no_tty_and_no_flag_fails_naming_both_flags(self):
+        ws = self._handrolled()
+        with mock.patch.object(vscode, "_interactive", return_value=False):
+            rc, _, err = self._on(ws)
+        self.assertEqual(rc, 1)
+        self.assertIn("--adopt", err)
+        self.assertIn("--replace", err)
+        self.assertIn("tuned", (ws / ".vscode" / "settings.json")
+                      .read_text("utf-8"))   # untouched
+
+    def test_adopt_brackets_the_users_rules_untouched(self):
+        ws = self._handrolled()
+        rc, _, _ = self._on(ws, "--adopt")
+        self.assertEqual(rc, 0)
+        lines = _settings_of(ws)
+        begin, end = vscode.maybe_region(lines)
+        self.assertEqual(vscode.region_state(lines, begin, end), "on")
+        self.assertIn("^tuned$", "\n".join(lines[begin:end]))
+        self.assertIn("years of care", "\n".join(lines))   # comment kept
+
+    def test_replace_discards_the_users_rules_for_packaged(self):
+        ws = self._handrolled()
+        rc, _, _ = self._on(ws, "--replace")
+        self.assertEqual(rc, 0)
+        text = "\n".join(_settings_of(ws))
+        self.assertNotIn("^tuned$", text)
+        self.assertIn("visibility:", text)
+        self.assertIn('"editor.rulers": [80]', text)   # rest of file kept
+
+    def test_interactive_cancel_changes_nothing_and_exits_nonzero(self):
+        ws = self._handrolled()
+        before = (ws / ".vscode" / "settings.json").read_text("utf-8")
+        with mock.patch.object(vscode, "_interactive", return_value=True), \
+             mock.patch.object(vscode, "_ask", return_value="c"):
+            rc, _, _ = self._on(ws)
+        self.assertEqual(rc, 1)
+        self.assertEqual((ws / ".vscode" / "settings.json")
+                         .read_text("utf-8"), before)
+
+
+class TestOfferHighlight(unittest.TestCase):
+
+    def test_on_offers_the_highlight_extension_when_missing(self):
+        ws = _ws(self)
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        run = self.enterContext(mock.patch.object(
+            vscode, "_run", return_value=_proc("")))
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=True))
+        self.enterContext(mock.patch.object(
+            vscode, "_ask", return_value="y"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)
+        self.assertIn(
+            ["/u/code", "--install-extension", vscode.HIGHLIGHT_ID],
+            [c.args[0] for c in run.call_args_list])
+
+    def test_non_interactive_on_prints_a_hint_instead(self):
+        ws = _ws(self)
+        editor = vscode.Editor("code", "Visual Studio Code", "/u/code", True)
+        self.enterContext(mock.patch.object(
+            vscode, "discover_editors", return_value=[editor]))
+        run = self.enterContext(mock.patch.object(
+            vscode, "_run", return_value=_proc("")))
+        self.enterContext(mock.patch.object(
+            vscode, "_interactive", return_value=False))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["on", "--workspace", str(ws)])
+        self.assertEqual(rc, 0)               # the toggle itself succeeded
+        self.assertIn(vscode.HIGHLIGHT_ID, out.getvalue())
+        self.assertNotIn(
+            ["/u/code", "--install-extension", vscode.HIGHLIGHT_ID],
+            [c.args[0] for c in run.call_args_list])
+
+
+class TestSetup(unittest.TestCase):
+
+    def test_setup_installs_then_offers_on_in_a_workspace(self):
+        ws = _ws(self)
+        _machine_env(self)
+        self.enterContext(mock.patch.object(
+            vscode, "_offer_highlight"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = vscode.main(["setup", "--workspace", str(ws), "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertTrue((ws / ".vscode" / "settings.json").is_file())
+
+    def test_setup_without_a_workspace_still_installs(self):
+        _machine_env(self)
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_WORKSPACE"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(Path, "cwd", return_value=tmp), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = vscode.main(["setup", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no campaign workspace", out.getvalue())

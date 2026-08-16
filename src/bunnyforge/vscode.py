@@ -613,16 +613,173 @@ def cmd_status(args) -> int:
     return 0
 
 
-def cmd_setup(args) -> int:
-    raise VscodeError("not implemented yet")  # Task 7
+# ── Workspace-half subcommands ──────────────────────────────────────────
+
+def _read_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").split("\n")
+
+
+def _write_lines(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _packaged_settings_lines() -> list[str]:
+    return (init.packaged_bytes("vscode/settings.json")
+            .decode("utf-8").split("\n"))
+
+
+def _resolve_conflict(args) -> str:
+    """Decision 6: an unmanaged highlight.regexes is never appended to and
+    never overwritten unasked. Adopt is the recommendation: rules already
+    in a workspace almost certainly came from this colour language, so
+    what differs is more likely deliberate tuning than drift."""
+    if args.adopt:
+        return "adopt"
+    if args.replace:
+        return "replace"
+    if not _interactive():
+        raise VscodeError(
+            f'{SETTINGS_REL} already defines "highlight.regexes" outside '
+            f"the managed markers — pass --adopt to bring it under "
+            f"management, content untouched (recommended), or --replace "
+            f"to overwrite it with the packaged rules")
+    print(f'{SETTINGS_REL} already defines "highlight.regexes" outside '
+          f"the managed markers.")
+    print("  [a] adopt (recommended) — bracket the existing rules with "
+          "the markers, content untouched")
+    print("  [r] replace — discard them and write the packaged rules")
+    print("  [c] cancel — change nothing")
+    answer = _ask("choice [a/r/c]: ").strip().lower()
+    return {"a": "adopt", "r": "replace"}.get(answer, "cancel")
+
+
+def _offer_highlight(args) -> None:
+    """Decision 1: the rules are inert without the highlight extension,
+    so detect and offer — but the toggle already succeeded, so nothing
+    here may fail the command."""
+    try:
+        editor = pick_editor(discover_editors(), args.editor)
+    except VscodeError as exc:
+        print(f"note: {exc}")
+        print(f"note: the rules render only once {HIGHLIGHT_ID} is "
+              f"installed")
+        return
+    if _has_extension(editor, HIGHLIGHT_ID):
+        return
+    if not args.yes and not _interactive():
+        print(f"note: {HIGHLIGHT_ID} is not installed in {editor.label}; "
+              f"the rules render only once it is — install it with: "
+              f"{editor.cli_id} --install-extension {HIGHLIGHT_ID}")
+        return
+    if not _confirm(f"install {HIGHLIGHT_ID} into {editor.label} "
+                    f"(it renders these rules)?", args.yes):
+        return
+    proc = _run([editor.path, "--install-extension", HIGHLIGHT_ID])
+    if proc.returncode != 0:
+        raise VscodeError(
+            f"{editor.cli_id} --install-extension {HIGHLIGHT_ID} failed: "
+            f"{proc.stderr.strip() or proc.returncode}")
+    print(f"installed {HIGHLIGHT_ID} (newest release) into {editor.label}")
 
 
 def cmd_on(args) -> int:
-    raise VscodeError("not implemented yet")  # Task 7
+    root = _config.resolve_workspace(args.workspace).root
+    path = root / SETTINGS_REL
+    if not path.is_file():
+        # Decision 4's easy case: absent — write the packaged file (the
+        # scaffold and this path can never drift apart) and enable it.
+        lines = _packaged_settings_lines()
+        begin, end = maybe_region(lines)
+        _write_lines(path, enable_region(lines, begin, end))
+        print(f"created {SETTINGS_REL} with source-view colouring on")
+    else:
+        lines = _read_lines(path)
+        region = maybe_region(lines)          # raises on unbalanced
+        if region is None:
+            key = find_unmanaged_key(lines, None)
+            if key is None:
+                lines = splice_region(lines)
+            else:
+                choice = _resolve_conflict(args)
+                if choice == "cancel":
+                    print("cancelled — nothing written")
+                    return 1
+                if choice == "adopt":
+                    lines = adopt_key(lines, key)
+                else:
+                    end_idx = key_span(lines, key)
+                    lines = splice_region(lines[:key]
+                                          + lines[end_idx + 1:])
+            begin, end = maybe_region(lines)
+            _write_lines(path, enable_region(lines, begin, end))
+            print(f"source-view colouring on ({SETTINGS_REL})")
+        elif args.replace:
+            # The region-level reset: packaged rules, enabled — the one
+            # deliberate way local tuning is discarded.
+            lines = replace_region(lines, *region)
+            begin, end = maybe_region(lines)
+            _write_lines(path, enable_region(lines, begin, end))
+            print("managed block reset to the packaged rules and enabled")
+        else:
+            state = region_state(lines, *region)
+            if state == "on":
+                print("source-view colouring is already on")
+            elif state == "empty":
+                raise VscodeError(
+                    "the managed block has nothing to enable — re-run "
+                    "with --replace to restore the packaged rules")
+            else:
+                _write_lines(path, enable_region(lines, *region))
+                print(f"source-view colouring on ({SETTINGS_REL})")
+    _offer_highlight(args)
+    return 0
 
 
 def cmd_off(args) -> int:
-    raise VscodeError("not implemented yet")  # Task 7
+    root = _config.resolve_workspace(args.workspace).root
+    path = root / SETTINGS_REL
+    if not path.is_file():
+        raise VscodeError(
+            f"no {SETTINGS_REL} in this workspace — nothing to turn off")
+    lines = _read_lines(path)
+    region = maybe_region(lines)
+    if region is None:
+        raise VscodeError(
+            f"no managed block in {SETTINGS_REL} — nothing this tool "
+            f"turned on; if colouring is enabled outside bunnyforge's "
+            f"markers, edit the file by hand (or run `bunnyforge vscode "
+            f"on` first to bring it under management)")
+    if region_state(lines, *region) == "off":
+        print("source-view colouring is already off")
+    else:
+        _write_lines(path, disable_region(lines, *region))
+        print(f"source-view colouring off ({SETTINGS_REL})")
+    # Toggling the setting is what was asked; uninstalling is a bigger
+    # action reached for deliberately, so hint rather than infer.
+    print("the markdown-preview half is a separate extension — to remove "
+          "it too: bunnyforge vscode uninstall")
+    return 0
+
+
+def cmd_setup(args) -> int:
+    rc = _ensure(args, update_only=False)
+    if rc != 0:
+        return rc
+    try:
+        _config.resolve_workspace(args.workspace)
+    except (_config.ConfigError, _workspace.WorkspaceError):
+        print("no campaign workspace here — run `bunnyforge vscode on` "
+              "inside one to enable source-view colouring")
+        return 0
+    if not args.yes and not _interactive():
+        print("hint: `bunnyforge vscode on` enables source-view "
+              "colouring in this workspace")
+        return 0
+    if _confirm("turn source-view colouring on in this workspace?",
+                args.yes):
+        return cmd_on(args)
+    return 0
 
 
 # ── The front door ──────────────────────────────────────────────────────
