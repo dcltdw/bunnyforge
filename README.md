@@ -47,6 +47,7 @@ entity files from the templates in `_Templates/`.
 | `build-sheets` | build one-page HTML reference sheets for a session |
 | `names` | generate culture-appropriate names |
 | `vscode` | install the preview extension and toggle editor colouring |
+| `serve-mcp` | serve the workspace to a remote AI agent over MCP (needs `bunnyforge[mcp]`) |
 | `test` | run the workspace test suite |
 
 Run `bunnyforge <command> --help` for a command's own options.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cli.py — the `bunnyforge` front door: one command, nine subcommands.
+cli.py — the `bunnyforge` front door: one command, ten subcommands.
 
 Only the first token is parsed here; everything after it passes to the
 target module's main(argv) verbatim. This parser never mirrors a tool's
@@ -36,6 +36,7 @@ from bunnyforge import (
     init,
     review,
     run_tests,
+    serve_mcp,
     vscode,
 )
 
@@ -50,6 +51,7 @@ _COMMANDS = {
     "build-sheets": build_sheets.main,
     "names": generate_names.main,
     "vscode": vscode.main,
+    "serve-mcp": serve_mcp.main,
     "test": run_tests.main,
 }
 
@@ -64,6 +66,7 @@ _SUMMARIES = {
     "build-sheets": "build one-page HTML reference sheets for a session",
     "names": "generate culture-appropriate names",
     "vscode": "install the preview extension and toggle editor colouring",
+    "serve-mcp": "serve the workspace to a remote AI agent over MCP",
     "test": "run the workspace test suite",
 }
 

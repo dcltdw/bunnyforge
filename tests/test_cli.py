@@ -30,6 +30,7 @@ from bunnyforge import (
     init,
     review,
     run_tests,
+    serve_mcp,
     vscode,
 )
 
@@ -48,6 +49,7 @@ class TestDispatchTable(unittest.TestCase):
             "build-sheets": build_sheets.main,
             "names": generate_names.main,
             "vscode": vscode.main,
+            "serve-mcp": serve_mcp.main,
             "test": run_tests.main,
         })
 
