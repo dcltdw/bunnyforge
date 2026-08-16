@@ -354,8 +354,17 @@ class TestOAuthOverHTTP(unittest.TestCase):
     def test_mcp_without_token_is_401_pointing_at_metadata(self):
         resp = self.client.post("/mcp", json={})
         self.assertEqual(resp.status_code, 401)
-        self.assertIn("resource_metadata",
-                      resp.headers.get("www-authenticate", ""))
+        www_auth = resp.headers.get("www-authenticate", "")
+        self.assertIn("resource_metadata", www_auth)
+        self.assertIn(
+            f"{self.ISSUER}/.well-known/oauth-protected-resource/mcp",
+            www_auth)
+
+    def test_mcp_with_bad_token_is_401(self):
+        resp = self.client.post(
+            "/mcp", json={},
+            headers={"Authorization": "Bearer not-a-real-token"})
+        self.assertEqual(resp.status_code, 401)
 
     def test_full_flow_register_to_authenticated_mcp(self):
         # 1. Dynamic Client Registration (blank form fields in claude.ai)
@@ -458,8 +467,9 @@ class TestOAuthOverHTTP(unittest.TestCase):
         app = server.streamable_http_app(stateless_http=True)
         with TestClient(app, base_url=self.ISSUER,
                         follow_redirects=False) as client:
-            self.assertEqual(
-                client.get("/.well-known/oauth-authorization-server")
-                .status_code, 404)
+            for path in ("/.well-known/oauth-authorization-server",
+                        "/.well-known/oauth-protected-resource/mcp",
+                        "/register", "/authorize", "/token", "/consent"):
+                self.assertEqual(client.get(path).status_code, 404, path)
             self.assertNotEqual(client.post("/mcp", json={})
                                 .status_code, 401)
