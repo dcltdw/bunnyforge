@@ -46,9 +46,32 @@ entity files from the templates in `_Templates/`.
 | `import-perceptions` | import player-authored wiki pages into `Perceptions/` |
 | `build-sheets` | build one-page HTML reference sheets for a session |
 | `names` | generate culture-appropriate names |
+| `vscode` | install the preview extension and toggle editor colouring |
 | `test` | run the workspace test suite |
 
 Run `bunnyforge <command> --help` for a command's own options.
+
+## VS Code integration
+
+`bunnyforge init` scaffolds `.vscode/settings.json` and
+`.vscode/extensions.json` with a visibility colour language for the editor —
+every `.md` file coloured by its front-matter `visibility`, the `## GM notes`
+boundary marked. It ships off; `bunnyforge vscode` manages it:
+
+    bunnyforge vscode status      # both halves: installed, available, on/off
+    bunnyforge vscode setup       # install/update, then offer to enable
+    bunnyforge vscode on|off      # toggle the source-view block
+    bunnyforge vscode install|update|uninstall   # the preview extension
+
+The source-view half is rendered by the Marketplace extension
+`fabiospampinato.vscode-highlight`. The markdown-preview half,
+[`dcltdw.bunnyforge-visibility-preview`](https://github.com/dcltdw/bunnyforge-visibility-preview),
+is not on the Marketplace; it sideloads as a `.vsix` from GitHub releases,
+and sideloaded extensions never auto-update — `bunnyforge vscode update`
+checks the release feed. Only Visual Studio Code is tested; VS Code
+Insiders, VSCodium and Cursor are offered but unsupported. `on`/`off`
+rewrite only the marked managed block in `.vscode/settings.json`; the rest
+of the file — including its comments — is yours.
 
 ## The workspace
 
@@ -63,15 +86,9 @@ campaign tests it invites you to write — the setting-specific invariants
 and ships a worked example, commented out, to adapt. `bunnyforge test`
 runs them, and checks that no test wrote into your campaign while running.
 
-It also scaffolds a `.vscode/` pair, shipped switched off. `settings.json`
-holds a block that colours `.md` files by their front-matter `visibility`
-— red for `gm-only`, green for `player-visible`, cyan for `mixed`, in
-dark and light variants — with every line of it commented out behind a
-`//- ` prefix, so a fresh workspace renders exactly as it would without
-the file. Delete the prefixes to switch it on; the header comment says so
-in place, and carries two alternate palettes to swap in.
-`extensions.json` recommends the extension that renders it — without it
-installed, the files simply render plain.
+It also scaffolds a `.vscode/` pair — a visibility colour language for the
+editor — shipped off. `bunnyforge vscode` manages it; see
+[VS Code integration](#vs-code-integration) above.
 
 ## Names
 

@@ -7,7 +7,7 @@
   // below: it is not on the VS Code Marketplace (publishing there now
   // requires an Azure DevOps org linked to an active Azure
   // subscription), so a recommendation entry could never resolve.
-  // Install it from its GitHub releases instead —
+  // Install it with `bunnyforge vscode setup`, or by hand —
   //   https://github.com/dcltdw/bunnyforge-visibility-preview/releases/latest
   //   code --install-extension <downloaded .vsix file>
   // It is optional: absent, the preview renders the plain front-matter

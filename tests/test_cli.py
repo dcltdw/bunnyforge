@@ -30,6 +30,7 @@ from bunnyforge import (
     init,
     review,
     run_tests,
+    vscode,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -46,6 +47,7 @@ class TestDispatchTable(unittest.TestCase):
             "import-perceptions": import_perceptions.main,
             "build-sheets": build_sheets.main,
             "names": generate_names.main,
+            "vscode": vscode.main,
             "test": run_tests.main,
         })
 

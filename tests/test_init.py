@@ -407,16 +407,14 @@ class TestWhatInitWrites(unittest.TestCase):
             self.assertIn(pointer, result.stdout)
             self.assertTrue((target / pointer).is_file())
 
-    def test_points_at_the_inert_vscode_scaffold_once(self):
-        # One line, not a paragraph (#34) — and command-neutral: the
-        # `bunnyforge vscode` command does not exist until #33.
+    def test_points_at_the_vscode_command_once(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(
                 init.main([str(tmp / "new"), "--name", "X"]), 0)
         pointing = [l for l in out.getvalue().splitlines()
-                    if ".vscode/settings.json" in l]
+                    if "bunnyforge vscode" in l]
         self.assertEqual(len(pointing), 1, out.getvalue())
 
     def test_does_not_write_reanchor_txt(self):
@@ -533,9 +531,10 @@ class TestFreshWorkspacePassesTheGate(unittest.TestCase):
 
 
 # The cross-ticket contract with the `bunnyforge vscode` command (#33):
-# these strings are frozen — #33 parses them. Hardcoded here because the
-# constants live in vscode.py, which does not exist until #33; that ticket
-# adds a drift test binding its constants to these packaged bytes.
+# these strings are frozen — that command parses them. Hardcoded rather
+# than imported from vscode.py, which holds the same constants; the drift
+# test in tests/test_vscode.py (TestPackagedContract) binds those to these
+# packaged bytes, so neither side can move alone.
 VSCODE_MARKER_BEGIN = "// bunnyforge:begin visibility-colouring"
 VSCODE_MARKER_END = "// bunnyforge:end visibility-colouring"
 VSCODE_OFF_PREFIX = "//- "
@@ -545,9 +544,9 @@ class TestVscodeScaffold(unittest.TestCase):
     """The packaged .vscode/ files: inert on arrival, valid JSONC in both
     toggle states, and never recommending an extension that cannot resolve.
 
-    These tests deliberately do NOT pin the comment prose — #33 rewords the
-    headers to name the `bunnyforge vscode` command once it exists, and that
-    must not break this suite.
+    These tests deliberately do NOT pin the comment prose — #33 reworded
+    the headers to name the `bunnyforge vscode` command, and further
+    rewording must not break this suite.
     """
 
     def _settings_lines(self) -> list[str]:
@@ -576,7 +575,8 @@ class TestVscodeScaffold(unittest.TestCase):
 
     def _as_json(self, *, enabled: bool):
         """The file as strict JSON: comments dropped, //-  lines optionally
-        re-enabled first — simulating exactly what #33's toggle does."""
+        re-enabled first — simulating exactly what the `bunnyforge vscode`
+        toggle does."""
         kept = []
         for raw in self._settings_lines():
             indent = raw[:len(raw) - len(raw.lstrip())]

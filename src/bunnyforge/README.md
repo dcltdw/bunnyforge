@@ -70,8 +70,9 @@ The `.vscode/` pair ships **inert**: `settings.json` carries a colouring block
 that tints `.md` files by their front-matter `visibility`, disabled line by line
 behind a reserved `//- ` prefix between two `bunnyforge:` marker comments, and
 `extensions.json` recommends the extension that renders it. A scaffolded
-workspace therefore looks exactly like one without the files until someone
-deletes the prefixes. The markers and the off-prefix are a frozen format —
+workspace therefore looks exactly like one without the files until
+`bunnyforge vscode on` rewrites the marked block (or someone deletes the
+prefixes by hand). The markers and the off-prefix are a frozen format —
 `tests/test_init.py::TestVscodeScaffold` pins them, and parses the file as
 strict JSON in both toggle states.
 
