@@ -41,7 +41,13 @@ Settings → Connectors → Add custom connector:
   built-in single-user authorization server.
 
 On connect, your browser lands on the server's consent page; type the GM
-key. Tokens refresh silently for up to 30 days before the page reappears.
+key. Only do that on a consent page you reached by clicking Connect in
+claude.ai yourself — never one that arrived by link from someone else, since
+anyone who learns your public hostname can register their own client and
+generate a working-looking consent link. Refresh tokens rotate and each new
+one gets a fresh 30-day TTL, so silent refresh continues indefinitely as
+long as the connector is used at least once a month; the consent page
+reappears only after 30 days of disuse.
 
 ## Resetting access
 

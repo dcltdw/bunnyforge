@@ -60,3 +60,10 @@ jobs:
         run: pip install -e '.[mcp]'
       - name: Suite, discovery door
         run: python3 -m unittest discover -s tests -t . -v
+      # The script door's mutation guard, right-sized to this repo: nothing
+      # here is git-ignored except build artifacts, so git sees any write a
+      # test makes into the tree -- which is what that guard is for.
+      - name: No test wrote into the repo
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
