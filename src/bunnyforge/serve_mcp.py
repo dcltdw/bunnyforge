@@ -68,11 +68,18 @@ class _BearerAuth:
         await self._app(scope, receive, send)
 
 
-def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False):
+def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
+                 oauth=None):
     """Assemble the MCP server over one workspace store.
 
     Imports the SDK, so a caller without the extra gets ModuleNotFoundError;
     main() translates that into the install hint.
+
+    With `oauth` (a SingleUserOAuthProvider), the SDK mounts the OAuth
+    bootstrap routes publicly and guards /mcp — passing the provider alone
+    is deliberate: MCPServer refuses a provider AND a token_verifier, and
+    wraps the provider in its own ProviderTokenVerifier. With oauth=None
+    the app is unauthenticated (--no-auth semantics).
 
     Tool docstrings are not decoration — they are what the remote agent reads
     to decide whether to call a tool, so they say when to use it, not merely
@@ -80,7 +87,25 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False):
     """
     from mcp.server import MCPServer
 
-    server = MCPServer("bunnyforge")
+    if oauth is None:
+        server = MCPServer("bunnyforge")
+    else:
+        from mcp.server.auth.settings import (AuthSettings,
+                                              ClientRegistrationOptions)
+        from bunnyforge._mcp_auth import consent_endpoint
+
+        server = MCPServer(
+            "bunnyforge",
+            auth_server_provider=oauth,
+            auth=AuthSettings(
+                issuer_url=oauth.issuer_url,
+                resource_server_url=f"{oauth.issuer_url}/mcp",
+                client_registration_options=ClientRegistrationOptions(
+                    enabled=True),
+            ),
+        )
+        server.custom_route("/consent", methods=["GET", "POST"])(
+            consent_endpoint(oauth, store.ws.config.name))
 
     @server.tool()
     def campaign_overview() -> dict:

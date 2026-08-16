@@ -298,3 +298,168 @@ class TestConsentEndpoint(unittest.TestCase):
         resp = self.client.post("/consent",
                                 data={"txn": "bogus", "key": "sekrit"})
         self.assertEqual(resp.status_code, 400)
+
+
+def scaffold_store(case: unittest.TestCase):
+    """Minimal workspace, same shape as test_serve_mcp.scaffold."""
+    from bunnyforge import _config, _store
+    root = Path(case.enterContext(tempfile.TemporaryDirectory()))
+    (root / "campaign.toml").write_text(
+        '[campaign]\nnamespace = "testwiki"\nname = "Testmere"\n',
+        encoding="utf-8")
+    (root / "NPCs").mkdir()
+    return _store.WorkspaceStore(_config.open_workspace(root))
+
+
+def pkce_pair():
+    import base64
+    import hashlib
+    verifier = "v" * 43
+    digest = hashlib.sha256(verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    return verifier, challenge
+
+
+@unittest.skipUnless(HAVE_MCP, "requires bunnyforge[mcp]")
+class TestOAuthOverHTTP(unittest.TestCase):
+    """The discovery sequence from issue #42, now ending in tokens."""
+
+    ISSUER = "http://127.0.0.1:8000"
+
+    def setUp(self):
+        from starlette.testclient import TestClient
+        from bunnyforge import serve_mcp
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.provider = SingleUserOAuthProvider(
+            gm_key="sekrit", issuer_url=self.ISSUER,
+            state_path=root / "state.json")
+        server = serve_mcp.build_server(scaffold_store(self),
+                                        oauth=self.provider)
+        app = server.streamable_http_app(stateless_http=True)
+        self.client = self.enterContext(
+            TestClient(app, base_url=self.ISSUER, follow_redirects=False))
+        self.enterContext(
+            mock.patch("bunnyforge._mcp_auth._KEY_DELAY", 0))
+
+    def test_discovery_documents_are_public(self):
+        for path in ("/.well-known/oauth-authorization-server",
+                     "/.well-known/oauth-protected-resource/mcp"):
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 200, path)
+        meta = self.client.get(
+            "/.well-known/oauth-authorization-server").json()
+        self.assertEqual(meta["issuer"].rstrip("/"), self.ISSUER)
+        self.assertTrue(meta["registration_endpoint"].endswith("/register"))
+
+    def test_mcp_without_token_is_401_pointing_at_metadata(self):
+        resp = self.client.post("/mcp", json={})
+        self.assertEqual(resp.status_code, 401)
+        self.assertIn("resource_metadata",
+                      resp.headers.get("www-authenticate", ""))
+
+    def test_full_flow_register_to_authenticated_mcp(self):
+        # 1. Dynamic Client Registration (blank form fields in claude.ai)
+        reg = self.client.post("/register", json={
+            "client_name": "Claude",
+            "redirect_uris": ["http://localhost:9999/cb"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+        })
+        self.assertEqual(reg.status_code, 201, reg.text)
+        info = reg.json()
+
+        # 2. Authorize → 302 to the consent page
+        verifier, challenge = pkce_pair()
+        auth = self.client.get("/authorize", params={
+            "client_id": info["client_id"],
+            "response_type": "code",
+            "redirect_uri": "http://localhost:9999/cb",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": "st8",
+        })
+        self.assertEqual(auth.status_code, 302, auth.text)
+        consent_url = auth.headers["location"]
+        self.assertIn("/consent?txn=", consent_url)
+
+        # 3. GM types the key on the consent page
+        self.assertEqual(self.client.get(consent_url).status_code, 200)
+        txn = consent_url.split("txn=")[1]
+        granted = self.client.post(
+            "/consent", data={"txn": txn, "key": "sekrit"})
+        self.assertEqual(granted.status_code, 302)
+        code = granted.headers["location"].split("code=")[1].split("&")[0]
+
+        # 4. Code + PKCE verifier + minted client secret → tokens
+        tok = self.client.post("/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://localhost:9999/cb",
+            "client_id": info["client_id"],
+            "client_secret": info["client_secret"],
+            "code_verifier": verifier,
+        })
+        self.assertEqual(tok.status_code, 200, tok.text)
+        tokens = tok.json()
+
+        # 5. The bearer token opens /mcp (anything but 401 proves auth;
+        #    protocol-level responses are the SDK's business)
+        resp = self.client.post(
+            "/mcp", json={},
+            headers={"Authorization": f"Bearer {tokens['access_token']}"})
+        self.assertNotEqual(resp.status_code, 401)
+
+        # 6. Refresh rotates
+        ref = self.client.post("/token", data={
+            "grant_type": "refresh_token",
+            "refresh_token": tokens["refresh_token"],
+            "client_id": info["client_id"],
+            "client_secret": info["client_secret"],
+        })
+        self.assertEqual(ref.status_code, 200, ref.text)
+        self.assertNotEqual(ref.json()["refresh_token"],
+                            tokens["refresh_token"])
+        replay = self.client.post("/token", data={
+            "grant_type": "refresh_token",
+            "refresh_token": tokens["refresh_token"],
+            "client_id": info["client_id"],
+            "client_secret": info["client_secret"],
+        })
+        self.assertEqual(replay.status_code, 400)
+
+    def test_wrong_pkce_verifier_is_rejected(self):
+        reg = self.client.post("/register", json={
+            "client_name": "Claude",
+            "redirect_uris": ["http://localhost:9999/cb"],
+        }).json()
+        _, challenge = pkce_pair()
+        auth = self.client.get("/authorize", params={
+            "client_id": reg["client_id"], "response_type": "code",
+            "redirect_uri": "http://localhost:9999/cb",
+            "code_challenge": challenge, "code_challenge_method": "S256",
+        })
+        txn = auth.headers["location"].split("txn=")[1]
+        granted = self.client.post(
+            "/consent", data={"txn": txn, "key": "sekrit"})
+        code = granted.headers["location"].split("code=")[1].split("&")[0]
+        tok = self.client.post("/token", data={
+            "grant_type": "authorization_code", "code": code,
+            "redirect_uri": "http://localhost:9999/cb",
+            "client_id": reg["client_id"],
+            "client_secret": reg["client_secret"],
+            "code_verifier": "x" * 43,
+        })
+        self.assertEqual(tok.status_code, 400)
+
+    def test_no_oauth_means_no_auth_routes_and_open_mcp(self):
+        from starlette.testclient import TestClient
+        from bunnyforge import serve_mcp
+        server = serve_mcp.build_server(scaffold_store(self))
+        app = server.streamable_http_app(stateless_http=True)
+        with TestClient(app, base_url=self.ISSUER,
+                        follow_redirects=False) as client:
+            self.assertEqual(
+                client.get("/.well-known/oauth-authorization-server")
+                .status_code, 404)
+            self.assertNotEqual(client.post("/mcp", json={})
+                                .status_code, 401)
