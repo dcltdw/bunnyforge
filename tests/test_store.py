@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -228,3 +229,105 @@ class TestGenerateNames(StoreCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStageDraft(StoreCase):
+    def test_writes_into_staging_and_creates_dirs(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.stage_draft("NPCs", "Old Man Cho", "---\ntitle: Cho\n---\n")
+        self.assertEqual(rel, "_ExtractInbound/NPCs/Old Man Cho.md")
+        self.assertTrue((ws.root / rel).is_file())
+
+    def test_refuses_overwrite(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        store.stage_draft("NPCs", "Cho", "x")
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.stage_draft("NPCs", "Cho", "y")
+        self.assertIn("another name", str(ctx.exception))
+
+    def test_refuses_unknown_section_and_bad_names(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.stage_draft("Nope", "Cho", "x")
+        for bad in ("../escape", "a/b", ".hidden", "_underscore"):
+            with self.assertRaises(_store.StoreError):
+                store.stage_draft("NPCs", bad, "x")
+
+    def test_honors_configured_staging_dir(self):
+        ws = self.make_ws('\n[workspace]\nstaging_dir = "_Inbox"\n')
+        rel = _store.WorkspaceStore(ws).stage_draft("NPCs", "Cho", "x")
+        self.assertEqual(rel, "_Inbox/NPCs/Cho.md")
+
+
+class TestStageRevision(StoreCase):
+    def test_shadow_mirrors_the_canonical_path(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.stage_revision("NPCs/kim-ha-eun.md", "new text")
+        self.assertEqual(rel, "_ExtractInbound/NPCs/kim-ha-eun.md")
+        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"),
+                         "new text")
+
+    def test_latest_proposal_wins(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.stage_revision("NPCs/kim-ha-eun.md", "first")
+        rel = store.stage_revision("NPCs/kim-ha-eun.md", "second")
+        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"),
+                         "second")
+
+    def test_requires_an_existing_target(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.stage_revision("NPCs/nobody.md", "x")
+        self.assertIn("stage_draft", str(ctx.exception))  # points at the fix
+
+    def test_refuses_escapes(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.stage_revision("../outside.md", "x")
+
+
+class TestWriteEntity(StoreCase):
+    def make_git_ws(self):
+        ws = self.make_ws()
+        for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                    ["config", "user.name", "t"], ["add", "-A"],
+                    ["commit", "-qm", "seed"]):
+            subprocess.run(["git", "-C", str(ws.root)] + cmd, check=True)
+        return ws
+
+    def test_edits_and_commits(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        store.write_entity("NPCs/kim-ha-eun.md", "---\ntitle: X\n---\nnew\n")
+        self.assertIn("new", (ws.root / "NPCs/kim-ha-eun.md").read_text(
+            encoding="utf-8"))
+        log = subprocess.run(
+            ["git", "-C", str(ws.root), "log", "-1", "--format=%s"],
+            capture_output=True, text=True, check=True).stdout
+        self.assertIn("serve-mcp: edit NPCs/kim-ha-eun.md", log)
+        status = subprocess.run(
+            ["git", "-C", str(ws.root), "status", "--porcelain"],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(status.strip(), "")  # nothing left uncommitted
+
+    def test_identical_content_is_a_quiet_no_op(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        original = (ws.root / "NPCs/kim-ha-eun.md").read_text(encoding="utf-8")
+        store.write_entity("NPCs/kim-ha-eun.md", original)  # must not raise
+
+    def test_refuses_outside_a_git_repo(self):
+        store = _store.WorkspaceStore(self.make_ws())  # no git init
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.write_entity("NPCs/kim-ha-eun.md", "x")
+        self.assertIn("git", str(ctx.exception))
+
+    def test_refuses_missing_target_and_escapes(self):
+        store = _store.WorkspaceStore(self.make_git_ws())
+        with self.assertRaises(_store.StoreError):
+            store.write_entity("NPCs/nobody.md", "x")
+        with self.assertRaises(_store.StoreError):
+            store.write_entity("../outside.md", "x")

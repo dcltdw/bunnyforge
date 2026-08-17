@@ -20,6 +20,8 @@ belongs on the class, never in free functions serve_mcp.py calls directly.
 from __future__ import annotations
 
 import random
+import re
+import subprocess
 from pathlib import Path
 
 from bunnyforge import _common
@@ -29,6 +31,11 @@ from bunnyforge._config import Workspace
 SEARCH_CAP = 50       # hits per search reply; the reply says when it truncated
 SNIPPET_RADIUS = 80   # characters of context on each side of a match
 NAME_COUNT_CAP = 50   # names per request; a brainstorm needs a handful, not a page
+
+# Draft names become filenames. No path separators, no leading dot or
+# underscore (dot-files hide; the _-prefix is the workspace's own marker
+# for machinery directories).
+_DRAFT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _'-]*")
 
 
 class StoreError(Exception):
@@ -191,3 +198,63 @@ class WorkspaceStore:
                            for _ in range(count)],
                 "places": [_names.place_name(rng, inv, key)
                            for _ in range(count)]}
+
+    # -- write side ---------------------------------------------------------
+    # Staging paths are built directly rather than through _canonical: the
+    # staging directory is excluded from reads BY DESIGN, and these two
+    # methods are the only writers. Traversal is impossible by construction
+    # -- section is validated against config, and _DRAFT_NAME_RE admits no
+    # separator.
+
+    def _staging(self) -> Path:
+        return self.ws.root / self.ws.config.staging_dir
+
+    def stage_draft(self, section: str, name: str, content: str) -> str:
+        self._check_section(section)
+        if not _DRAFT_NAME_RE.fullmatch(name):
+            raise StoreError(
+                f"bad draft name {name!r} — letters, digits, spaces, "
+                "- _ ' only, starting with a letter or digit")
+        dest = self._staging() / section / f"{name}.md"
+        if dest.exists():
+            rel = dest.relative_to(self.ws.root).as_posix()
+            raise StoreError(f"{rel} already exists — pick another name")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        return dest.relative_to(self.ws.root).as_posix()
+
+    def stage_revision(self, path: str, content: str) -> str:
+        target = self._canonical(path)
+        if not target.is_file() or target.suffix != ".md":
+            raise StoreError(
+                f"no such content file: {path} — stage_revision proposes "
+                "changes to an existing file; use stage_draft for new "
+                "content")
+        dest = self._staging() / target.relative_to(self.ws.root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")  # latest proposal wins
+        return dest.relative_to(self.ws.root).as_posix()
+
+    def write_entity(self, path: str, content: str) -> str:
+        target = self._canonical(path)
+        if not target.is_file() or target.suffix != ".md":
+            raise StoreError(f"no such content file: {path}")
+        rel = target.relative_to(self.ws.root).as_posix()
+        if target.read_text(encoding="utf-8") == content:
+            return rel  # nothing to change, nothing to commit
+        probe = subprocess.run(
+            ["git", "-C", str(self.ws.root), "rev-parse",
+             "--is-inside-work-tree"], capture_output=True, text=True)
+        if probe.returncode != 0:
+            raise StoreError(
+                "direct edits require the workspace to be a git repository "
+                "— refusing to edit canon without history")
+        target.write_text(content, encoding="utf-8")
+        for sub in (["add", "--", rel],
+                    ["commit", "-m", f"serve-mcp: edit {rel}"]):
+            done = subprocess.run(["git", "-C", str(self.ws.root)] + sub,
+                                  capture_output=True, text=True)
+            if done.returncode != 0:
+                raise StoreError(f"git {sub[0]} failed: "
+                                 f"{done.stderr.strip() or done.stdout.strip()}")
+        return rel
