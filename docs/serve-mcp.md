@@ -163,8 +163,11 @@ passes. It then prints the URL and key to paste.
 
     scripts/mcp-session.py --workspace ~/campaigns/my-campaign --verify
 
-Set `DEFAULT_WORKSPACE` near the top of the script and it needs no
-arguments at all. Other flags: `--fresh` (drop every registered client and
+Export `BUNNYFORGE_MCP_WORKSPACE` from your shell profile and it needs no
+arguments at all — the workspace comes from `--workspace`, else that
+variable, else the `DEFAULT_WORKSPACE` constant near the top of the
+script. Prefer the variable: it survives `git pull` without leaving a
+local edit in `git status` forever. Other flags: `--fresh` (drop every registered client and
 token first), `--status`, `--down`, `--port`, `--bunnyforge` (the console
 script that has the `[mcp]` extra, if it is not on your PATH).
 

@@ -16,8 +16,10 @@ no public API for that -- connectors are added through Settings in the web
 UI. Everything up to that point is automated, and --verify proves the
 server is genuinely working, so the manual step is reduced to one paste.
 
-Pass --workspace, or edit DEFAULT_WORKSPACE below to your own campaign and
-then run it with no arguments at all.
+The workspace comes from --workspace, else $BUNNYFORGE_MCP_WORKSPACE, else
+the DEFAULT_WORKSPACE constant below. Export the variable from your shell
+profile and the script needs no arguments at all, with no local edit to
+carry.
 
 Usage:
     scripts/mcp-session.py --workspace ~/campaigns/my-campaign --verify
@@ -43,8 +45,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Set this to your own campaign and the script needs no arguments at all.
-# Left unset here because it ships for everyone; --workspace always works.
+# A fallback for people who would rather edit the script than set an
+# environment variable. Prefer $BUNNYFORGE_MCP_WORKSPACE: it survives
+# `git pull` without leaving a local edit in `git status` forever.
 #
 #   DEFAULT_WORKSPACE = str(Path.home() / "campaigns" / "my-campaign")
 #
@@ -57,9 +60,22 @@ SERVER_LOG = STATE / "bunnyforge" / "server.log"
 OAUTH_STATE = STATE / "bunnyforge" / "mcp-oauth-state.json"
 TUNNEL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 KEY_ENV = "BUNNYFORGE_MCP_KEY"
+WORKSPACE_ENV = "BUNNYFORGE_MCP_WORKSPACE"
 
 
 # ── session memory ──────────────────────────────────────────────────────
+
+def chosen_workspace(cli_value=None, environ=None):
+    """--workspace beats $BUNNYFORGE_MCP_WORKSPACE beats DEFAULT_WORKSPACE.
+
+    The flag wins so a one-off run needs no unsetting; the variable beats
+    the constant so the shipped copy can be used as-is, with the campaign
+    named in a shell profile rather than in a local edit that shows up in
+    `git status` forever.
+    """
+    env = os.environ if environ is None else environ
+    return cli_value or env.get(WORKSPACE_ENV) or DEFAULT_WORKSPACE
+
 
 def load_session() -> dict:
     try:
@@ -388,10 +404,10 @@ def verify(url: str, key: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Bring up a claude.ai-ready bunnyforge MCP session.")
-    parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
-                        help="campaign workspace path"
-                             + (" (default: %(default)s)"
-                                if DEFAULT_WORKSPACE else ""))
+    parser.add_argument("--workspace",
+                        help=f"campaign workspace path (default: "
+                             f"${WORKSPACE_ENV}, else the DEFAULT_WORKSPACE "
+                             f"constant in this script)")
     parser.add_argument("--bunnyforge",
                         default=str(Path.home() / ".venvs" / "bunnyforge-mcp"
                                     / "bin" / "bunnyforge"),
@@ -435,10 +451,12 @@ def main() -> int:
         save_session(tunnel_pid=None, server_pid=None)
         return 0
 
-    if not args.workspace:
-        parser.error("--workspace is required (or set DEFAULT_WORKSPACE "
-                     "near the top of this script)")
-    workspace = str(Path(args.workspace).expanduser().resolve())
+    chosen = chosen_workspace(args.workspace)
+    if not chosen:
+        parser.error(f"no workspace: pass --workspace, export "
+                     f"${WORKSPACE_ENV}, or set DEFAULT_WORKSPACE near the "
+                     f"top of this script")
+    workspace = str(Path(chosen).expanduser().resolve())
     if not (Path(workspace) / "campaign.toml").is_file():
         parser.error(f"{workspace} is not a campaign workspace "
                      f"(no campaign.toml) — pass --workspace")
