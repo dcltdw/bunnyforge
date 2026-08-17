@@ -119,6 +119,29 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         first if you are unsure which cultures exist."""
         return store.generate_names(culture, count)
 
+    @server.tool()
+    def save_draft(section: str, name: str, content: str) -> str:
+        """Stage NEW content (a full markdown file, front matter included)
+        into the workspace's staging area for the GM to review and promote.
+        Never overwrites; returns the staged path."""
+        return store.stage_draft(section, name, content)
+
+    @server.tool()
+    def propose_revision(path: str, content: str) -> str:
+        """Stage a full-file revision of an EXISTING workspace file as a
+        shadow copy in the staging area. The GM reviews it as a diff.
+        Re-proposing replaces the earlier proposal; returns the staged
+        path."""
+        return store.stage_revision(path, content)
+
+    if allow_direct_edits:
+        @server.tool()
+        def write_entity(path: str, content: str) -> str:
+            """Edit a canonical workspace file in place. Each edit is
+            auto-committed to git. Available only because this server was
+            started with --allow-direct-edits."""
+            return store.write_entity(path, content)
+
     def _reader(path):
         def read() -> str:
             return path.read_text(encoding="utf-8")
