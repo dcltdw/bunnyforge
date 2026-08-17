@@ -75,6 +75,45 @@ one gets a fresh 30-day TTL, so silent refresh continues indefinitely as
 long as the connector is used at least once a month; the consent page
 reappears only after 30 days of disuse.
 
+## What the agent can do
+
+**Read:** `campaign_overview`, `list_entities`, `read_entity`, `search`,
+`generate_names`. Workspace doctrine (`style-guide.md`,
+`situation-design.md`, `AGENTS.md`) is served as MCP *resources* — tell
+the agent to load them before it writes anything for this campaign.
+
+**Write back, into staging:**
+
+| tool | writes to |
+|---|---|
+| `save_draft(section, name, content)` | `<staging_dir>/<section>/<name>.md` — new content only, never overwrites |
+| `propose_revision(path, content)` | `<staging_dir>/<path>`, mirroring the canonical path, so you review it as a diff |
+
+Both land in the workspace's staging directory (`staging_dir`, default
+`_ExtractInbound`) and go no further. That directory is one of
+`exclude_dirs`, so staged material is invisible to the read tools and to
+every other bunnyforge command until you promote it by hand — it flows
+through whatever extraction workflow your `AGENTS.md` already defines.
+**In the default configuration the agent cannot alter canon at all.** The
+server stages; deciding what becomes canon stays yours.
+
+**Write back, into canon — only if you ask for it:**
+
+    bunnyforge serve-mcp --allow-direct-edits ...
+
+registers a third tool, `write_entity(path, content)`, which edits a
+canonical file in place and commits each edit with a
+`serve-mcp: edit <path>` message. It refuses outside a git repository:
+without history there is no review and no undo, and that is the only
+thing that makes editing canon defensible. It is a per-run flag rather
+than a config key on purpose — trading the staging boundary for git
+history should be a decision you make when starting the server, not a
+setting that quietly persists.
+
+Publishing is structurally absent in every mode: no tool here can reach
+`Export/` or the wiki, so a remote agent cannot leak GM-only material to
+players even by accident.
+
 ## Resetting access
 
 Delete the token state file and restart the server:

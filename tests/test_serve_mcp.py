@@ -107,11 +107,29 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             {"campaign_overview", "list_entities", "read_entity", "search",
              "generate_names"}, names)
 
-    async def test_write_tools_absent_in_phase_1(self):
+    async def test_staging_tools_always_registered(self):
         server = serve_mcp.build_server(scaffold(self))
         names = {t.name for t in await server.list_tools()}
-        self.assertFalse({"save_draft", "propose_revision", "write_entity"}
-                         & names)
+        self.assertLessEqual({"save_draft", "propose_revision"}, names)
+
+    async def test_write_entity_only_with_the_flag(self):
+        # The gate is the whole safety story: staging is always available
+        # because it cannot reach canon, and canon is reachable only
+        # because someone passed a per-run flag.
+        store = scaffold(self)
+        off = {t.name for t in await serve_mcp.build_server(store).list_tools()}
+        on = {t.name for t in await serve_mcp.build_server(
+            store, allow_direct_edits=True).list_tools()}
+        self.assertNotIn("write_entity", off)
+        self.assertIn("write_entity", on)
+
+    async def test_save_draft_lands_in_staging(self):
+        store = scaffold(self)
+        await serve_mcp.build_server(store).call_tool(
+            "save_draft", {"section": "NPCs", "name": "Cho",
+                           "content": "---\ntitle: Cho\n---\n"})
+        self.assertTrue(
+            (store.ws.root / "_ExtractInbound/NPCs/Cho.md").is_file())
 
     async def test_every_tool_carries_a_description(self):
         # The description is how the remote agent decides to call a tool at
