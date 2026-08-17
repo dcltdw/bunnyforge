@@ -14,10 +14,12 @@ against a local one-shot server on an ephemeral port.
 
 import contextlib
 import http.server
+import os
 import importlib.util
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -51,10 +53,17 @@ class TestShipsGeneric(unittest.TestCase):
         self.assertIn("#   DEFAULT_WORKSPACE = ", body)
 
     def test_refuses_without_a_workspace_rather_than_guessing(self):
+        # The environment is scrubbed deliberately. This test inherited the
+        # caller's environment until BUNNYFORGE_MCP_WORKSPACE existed, at
+        # which point anyone who exported it in a shell profile -- the
+        # entire point of the variable -- would have seen this test start
+        # failing on their machine and nowhere else.
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_MCP_WORKSPACE"}
         proc = subprocess.run([sys.executable, str(SCRIPT)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("--workspace is required", proc.stderr)
+        self.assertIn("--workspace", proc.stderr)
 
 
 class TestTunnelBannerParsing(unittest.TestCase):
@@ -160,6 +169,60 @@ class TestPortGuard(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             session.clear_port(port)
         self.assertIn("not a serve-mcp", str(ctx.exception))
+
+
+
+class TestWorkspaceResolution(unittest.TestCase):
+    """--workspace beats $BUNNYFORGE_MCP_WORKSPACE beats DEFAULT_WORKSPACE.
+
+    The order is the whole feature: the variable exists so the shipped
+    copy can be used unedited, and the flag has to still win so a one-off
+    run against another campaign needs no unsetting.
+    """
+
+    def test_the_flag_wins(self):
+        self.assertEqual(
+            session.chosen_workspace("/from/flag",
+                                     {"BUNNYFORGE_MCP_WORKSPACE": "/from/env"}),
+            "/from/flag")
+
+    def test_the_env_var_is_used_when_the_flag_is_absent(self):
+        self.assertEqual(
+            session.chosen_workspace(None,
+                                     {"BUNNYFORGE_MCP_WORKSPACE": "/from/env"}),
+            "/from/env")
+
+    def test_nothing_set_is_none_rather_than_a_guess(self):
+        # DEFAULT_WORKSPACE ships as None, so an unconfigured run must
+        # refuse rather than pick a directory nobody named.
+        self.assertIsNone(session.chosen_workspace(None, {}))
+
+    def test_an_empty_env_var_does_not_count_as_set(self):
+        # `export BUNNYFORGE_MCP_WORKSPACE=` in a profile is a common way
+        # to end up here, and treating "" as configured would resolve to
+        # the current directory.
+        self.assertIsNone(
+            session.chosen_workspace(None, {"BUNNYFORGE_MCP_WORKSPACE": ""}))
+
+    def test_the_refusal_names_all_three_sources(self):
+        env = {k: v for k, v in os.environ.items()
+               if k != "BUNNYFORGE_MCP_WORKSPACE"}
+        proc = subprocess.run([sys.executable, str(SCRIPT)],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 2)
+        for source in ("--workspace", "BUNNYFORGE_MCP_WORKSPACE",
+                       "DEFAULT_WORKSPACE"):
+            self.assertIn(source, proc.stderr)
+
+    def test_the_env_var_reaches_the_real_cli(self):
+        # Not just the helper: the wiring has to actually be in main().
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "campaign.toml").write_text('[campaign]\nnamespace = "t"\n',
+                                           encoding="utf-8")
+        env = {**os.environ, "BUNNYFORGE_MCP_WORKSPACE": str(tmp)}
+        proc = subprocess.run([sys.executable, str(SCRIPT), "--status"],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 if __name__ == "__main__":
