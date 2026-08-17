@@ -4,6 +4,10 @@
 over MCP. Everything it serves is GM-eyes-only; the server refuses to
 start without an auth mechanism.
 
+Doing it by hand once is worth it — the steps below are the whole
+picture. After that, `scripts/mcp-session.py` runs all of them in one
+command; see "One command" at the end.
+
 ## Install
 
     pip install 'bunnyforge[mcp]'
@@ -93,3 +97,33 @@ but not already-issued tokens — delete the state file for that.
 - **"Couldn't register with sign-in service":** the server is not
   reachable at the connector URL, or it was started `--no-auth` (no OAuth
   routes exist in that mode).
+
+## One command
+
+`scripts/mcp-session.py` does everything above in one go: reuses a live
+tunnel or starts a fresh one, waits for its hostname to reach DNS, starts
+`serve-mcp` bound to that hostname, and holds until the pre-flight check
+passes. It then prints the URL and key to paste.
+
+    scripts/mcp-session.py --workspace ~/campaigns/my-campaign --verify
+
+Set `DEFAULT_WORKSPACE` near the top of the script and it needs no
+arguments at all. Other flags: `--fresh` (drop every registered client and
+token first), `--status`, `--down`, `--port`, `--bunnyforge` (the console
+script that has the `[mcp]` extra, if it is not on your PATH).
+
+`--verify` is the part worth knowing about. It drives the entire OAuth
+sequence itself — register, authorize, consent with your key, token — and
+finishes with a real authenticated MCP `initialize`. That last step is
+what claude.ai reports as *"no MCP server was found at the provided URL"*,
+and it is indistinguishable from three other failures until something
+tries it. If `--verify` passes and the connector still refuses, the
+problem is not on this side.
+
+The script is stdlib-only and lives in the repository rather than the
+package, so `pip install bunnyforge` does not bring it; copy it out if you
+want it on your PATH. It shells out to `cloudflared`, which quick tunnels
+need anyway.
+
+What it cannot do is add the connector to your claude.ai account — there
+is no public API for that, so the final paste stays manual.

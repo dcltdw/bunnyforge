@@ -67,6 +67,7 @@ _CAMPAIGN_PREFIX = "test_campaign_"
 _FILE_IDIOM_ALLOWED = {
     "test_cli.py": "reads pyproject.toml, which ships",
     "test_init.py": "drift guard reads in-repo canonicals until stage 8",
+    "test_mcp_session.py": "loads scripts/mcp-session.py, its subject",
     "test_portability.py": "this guard locates its sibling files",
     "test_samples.py": "reads samples/, which ships",
     "test_workspace.py": "copies sample cultures from samples/, which ships",
