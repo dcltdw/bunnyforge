@@ -75,6 +75,20 @@ one gets a fresh 30-day TTL, so silent refresh continues indefinitely as
 long as the connector is used at least once a month; the consent page
 reappears only after 30 days of disuse.
 
+### Then grant the tools — adding the connector is not the last step
+
+Once it is connected, claude.ai still asks before letting the agent call
+anything. In the connector's window, click **Always Allow** for its
+tools, and then **return to your chat from that window**. Going back some
+other way — a new tab, or the chat you already had open — did not carry
+the grant through when this was last tested.
+
+Worth knowing because the symptom is silent: the server is running,
+`--check` says ready, the connector shows as added, and the agent simply
+never calls a tool. Nothing appears in the server log either, because
+nothing reaches it. If that is what you are seeing, this is the step you
+are missing.
+
 ## What the agent can do
 
 **Read:** `campaign_overview`, `list_entities`, `read_entity`, `search`,
@@ -136,6 +150,9 @@ but not already-issued tokens — delete the state file for that.
 - **"Couldn't register with sign-in service":** the server is not
   reachable at the connector URL, or it was started `--no-auth` (no OAuth
   routes exist in that mode).
+- **The connector is added, but the agent never calls a tool** — and the
+  server log shows nothing arriving: the tools have not been granted. See
+  "Then grant the tools" above.
 
 ## One command
 

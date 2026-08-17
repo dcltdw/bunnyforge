@@ -530,6 +530,10 @@ def _run_session(args, url, key, server) -> int:
 
       {key}
 
+  Then click ALWAYS ALLOW for the tools, and go back to your chat
+  FROM THAT WINDOW. Skip it and the agent never calls a tool —
+  with nothing in the server log, because nothing reaches it.
+
   Leave this terminal running. The hostname dies with the tunnel,
   and the connector must be re-added if it changes.
 ================================================================""")
