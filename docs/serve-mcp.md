@@ -93,8 +93,11 @@ are missing.
 
 **Read canon:** `campaign_overview`, `list_entities`, `read_entity`,
 `search`, `generate_names`. Workspace doctrine (`style-guide.md`,
-`situation-design.md`, `AGENTS.md`) is served as MCP *resources* — tell
-the agent to load them before it writes anything for this campaign.
+`situation-design.md`, `AGENTS.md`, `campaign-doctrine.md`) is served as
+MCP *resources* — tell the agent to load them before it writes anything
+for this campaign. `campaign-doctrine.md` carries the rules specific to
+this campaign, and overrides `AGENTS.md` where the two disagree; a
+workspace that predates it simply serves the other three.
 
 **Write drafts:**
 

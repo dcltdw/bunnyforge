@@ -14,10 +14,14 @@ offline path via `deploy-export --render-only`.
 
 - **Python ≥ 3.11, zero runtime dependencies.**
 - **Agent-first doctrine.** `init` writes an `AGENTS.md` contract that
-  tells an AI agent how to behave in the workspace, and doctrine
-  *skeletons* — a style guide and a situation-design guide that interview
-  you: each section explains what belongs in it, so filling them in is
-  answering questions, not staring at a blank file.
+  tells an AI agent how to behave in the workspace — package-owned, so a
+  new release replaces it wholesale — plus `campaign-doctrine.md` beside
+  it for the rules that are yours alone. And doctrine *skeletons*: a style
+  guide and a situation-design guide that interview you, each section
+  explaining what belongs in it, so filling them in is answering
+  questions rather than staring at a blank file. See
+  [`docs/adopting-doctrine.md`](docs/adopting-doctrine.md) for how to
+  adopt a new version.
 - **Player-visibility model.** Every file carries a `visibility` field;
   the exporter enforces it, so GM-only material cannot leak to the wiki.
 
