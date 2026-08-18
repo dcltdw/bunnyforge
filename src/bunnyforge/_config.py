@@ -113,9 +113,9 @@ _DEFAULTS = {
                     "Sessions", "Handouts"],
     "inherit_dirs": ["Briefs", "Perceptions"],
     "compendium_dirs": ["NPCs", "Factions", "Setting", "Mechanics", "PCs", "Ideas"],
-    "root_docs": ["AGENTS.md", "compendium.md", "front-burner.md",
-                  "open-questions.md", "out-of-game.md", "situation-design.md",
-                  "style-guide.md", "tickets.md"],
+    "root_docs": ["AGENTS.md", "campaign-doctrine.md", "compendium.md",
+                  "front-burner.md", "open-questions.md", "out-of-game.md",
+                  "situation-design.md", "style-guide.md", "tickets.md"],
     "exclude_dirs": ["_Ignore", "_Archive", "_Templates",
                      "Sheets", "Reviews", "docs", "scripts", "tests"],
     # The GM's inbound queue (material authored elsewhere, awaiting

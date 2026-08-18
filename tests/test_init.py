@@ -29,12 +29,12 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _root_doc_only_workspace(case: unittest.TestCase) -> Path:
-    """A workspace holding the 8 default root docs and nothing else.
+    """A workspace holding the 9 default root docs and nothing else.
 
     The shape a fresh `init` produces before any entity file exists, and so
     the shape every wikilink in the packaged doctrine has to resolve against.
     The packaged AGENTS.md is written in — the copy `init` actually ships;
-    the other seven root docs are one-line stubs, because all this needs of
+    the other eight root docs are one-line stubs, because all this needs of
     them is that they be link targets.
     """
     tmp = Path(case.enterContext(tempfile.TemporaryDirectory())).resolve()
@@ -519,6 +519,16 @@ class TestGeneratedConfig(unittest.TestCase):
         cfg = self._config_of(name='My "Great" Campaign\\Two')
         self.assertEqual(cfg.name, 'My "Great" Campaign\\Two')
         self.assertEqual(cfg.namespace, "mygreatcampaigntwo")
+
+    def test_the_commented_root_docs_example_names_every_default(self):
+        # campaign.toml.in teaches what is overridable by showing each default
+        # commented out. That is a second copy of _DEFAULTS, and the class's
+        # docstring is right that a second copy is a second thing to drift --
+        # so guard the one list this change touches rather than trusting it.
+        template = init.packaged_bytes("campaign.toml.in").decode("utf-8")
+        for doc in _config._DEFAULTS["root_docs"]:
+            with self.subTest(doc=doc):
+                self.assertIn(f'"{doc}"', template)
 
 
 def _scrubbed_env(**extra: str) -> dict[str, str]:
