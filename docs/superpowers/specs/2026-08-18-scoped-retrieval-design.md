@@ -40,8 +40,9 @@ Settled on the ticket and in brainstorming with the GM, 2026-08-18:
 | Default scope | The union of live and archive — the uniform behavior #62 ships stays the default (ticket record). |
 | Scope token names | `live` \| `archive` \| `both`. `both` rather than `all`: the domain has exactly two trees, and #62's `_`-means-not-canon design makes that structural (there is live canon and there is `Archive/`; a third tree has nowhere to come from). |
 | Self-aware results | Every search hit and listing row carries `archived: true|false` — always present, never inferred from the path (ticket record). |
-| scope × section | **Scope-resolved**: `section` resolves inside the chosen scope's tree. Under `scope="archive"`, `section="NPCs"` means `Archive/NPCs/`. Under the default `scope="both"`, `section` keeps today's top-level meaning exactly — every existing call is backward-identical. |
-| The asymmetry | Accepted and documented: `scope="both"` + `section="NPCs"` returns live NPCs only (today's behavior), not the union of the live and archive resolutions. Backward-identical defaults are what it buys. |
+| scope × section | **Scope-resolved, symmetric**: `section` names the content section and resolves inside the chosen scope's tree(s). `scope="archive"` + `section="NPCs"` means `Archive/NPCs/`; `scope="both"` (the default) is the union — `NPCs/` ∪ `Archive/NPCs/`, every row labelled. Amended 2026-08-18 during spec review: the first draft kept sectioned `both` backward-identical (live rows only), rejected as a trap — an explicit "both" must mean both. |
+| #62's listings record | Revised with eyes open: sectioned listings under the default scope now include archived rows. Rows are labelled `archived`, `campaign_overview` takes no scope so its counts keep #62's honest top-level meaning, and #62's collision check makes archived names *taken* — a listing that hides them hides exactly the names an agent must not reuse. |
+| `section="Archive"` | Stays a valid section token, denoting the archive tree: whole archive under `archive` and `both`; refused as a contradiction under `live`. |
 | `campaign_overview` | Additive only: `sections` keeps its exact shape; a new `archive_sections` key breaks the archive down by mirror section. |
 | Guidance home | Doctrine as primary (packaged `AGENTS.md`), tool descriptions carry the condensed form and point at the doctrine resource. |
 | What the doctrine says | Not a use-case→scope mapping. **Scope is the GM's call, asked once at task start** (§4). |
@@ -67,25 +68,36 @@ def search(self, query: str, section: str | None = None,
 def list_entities(self, section: str, scope: str = "both") -> list[dict]: ...
 ```
 
+`section` names the *content* section and resolves inside the chosen
+scope's tree(s): a live file is in section `X` when its first path
+component is `X`; an archived file is in section `X` when its mirror is
+(`Archive/X/…`). `section="Archive"` denotes the archive tree itself.
+Section validation is unchanged (`_check_section`; unknown sections get
+the existing error).
+
 Semantics, by scope:
 
-- **`both`** (default): today's behavior verbatim. `section` names the
-  top-level directory; `Archive` is its own section (#62's record — live
-  section listings stay uninflated). The only observable change is the new
-  `archived` field on results (§2).
-- **`live`**: archived files are excluded from the walk's results. `section`
-  keeps its top-level meaning. Root docs are live and stay included in
-  unsectioned search. `section="Archive"` + `scope="live"` is a
-  contradiction and is refused with a `StoreError` that names the working
-  alternatives (drop the section, or use `scope="archive"`).
-- **`archive`**: archived files only, and `section` resolves *inside* the
-  archive tree by mirror: `section="NPCs"` matches `Archive/NPCs/*` (first
-  component is the archive dir, second is the section); `section=None` or
-  `section="Archive"` means the whole archive. Section validation is
-  unchanged (`_check_section`; unknown sections get the existing error).
-  Files directly at `Archive/*.md` (no mirror) appear in whole-archive
-  queries and in no mirror section — consistent with #62's
-  default-to-entity handling of strays: visible, never a silent hole.
+- **`both`** (default): the union of the two scopes below. Unsectioned
+  calls behave as today — everything, now labelled (§2). Sectioned calls
+  return live *and* mirrored archived members: `section="NPCs"` →
+  `NPCs/` ∪ `Archive/NPCs/`, each row marked. `section="Archive"` → the
+  whole archive.
+- **`live`**: archived files excluded; `section` matches the top level.
+  Root docs are live and stay included in unsectioned search.
+  `section="Archive"` + `scope="live"` is a contradiction and is refused
+  with a `StoreError` that names the working alternatives (drop the
+  section, or use `scope="archive"`).
+- **`archive`**: archived files only: `section="NPCs"` matches
+  `Archive/NPCs/*`; `section=None` or `section="Archive"` means the whole
+  archive. Files directly at `Archive/*.md` (no mirror) appear in
+  whole-archive and unsectioned-`both` queries and in no mirror section —
+  consistent with #62's default-to-entity handling of strays: visible,
+  never a silent hole.
+
+The behavior change vs #62-as-landed is confined to sectioned queries
+under the default scope, which now include labelled archived rows; that
+revision is recorded in the decisions table, and nothing released has
+seen the intermediate behavior.
 
 Untouched surfaces: `read_entity` (path-addressed; the caller knows what it
 asked for), `generate_names`, the drafts and inbound families, and the write
@@ -106,8 +118,10 @@ shapes yet (see sequencing decision).
 
 ### 3. `campaign_overview`
 
-`sections` keeps its exact current shape: live top-level counts plus the
-flat `Archive` total. One new key:
+`campaign_overview` takes no scope, and `sections` keeps its exact current
+shape: live top-level counts plus the flat `Archive` total — the counts
+stay honest by top-level location, which is where #62's uninflation record
+now lives. One new key:
 
 - `archive_sections`: counts of archived files by mirror section, using the
   same counting rule one level down — count `parts[1]` when
@@ -157,11 +171,12 @@ that region of `AGENTS.md` once either way.
 **Tool descriptions (condensed form).** `search` and `list_entities`
 docstrings gain roughly: *scope narrows retrieval to live canon only
 (`"live"`), archived canon only (`"archive"`), or both (default; every
-result is labelled `archived`). Under `scope="archive"`, `section` names
-the mirrored section inside the archive (`section="NPCs"` →
-`Archive/NPCs/`). When gathering material for creative work, the scope is
-the GM's call — ask at task start if the request hasn't said. The AGENTS.md
-doctrine resource carries the full rule.* `campaign_overview`'s description
+result is labelled `archived`). `section` names the content section in
+either tree: `section="NPCs"` covers `NPCs/` and `Archive/NPCs/` under the
+default, only one of them under a narrowed scope. When gathering material
+for creative work, the scope is the GM's call — ask at task start if the
+request hasn't said. The AGENTS.md doctrine resource carries the full
+rule.* `campaign_overview`'s description
 mentions `archive_sections`. Final wording at implementation; also subject
 to the human vocabulary read.
 
@@ -204,13 +219,17 @@ covers it.
 
 - **Store, `search`:** live/archive/both × sectioned/unsectioned; archived
   hits excluded under `live`; mirror resolution under `archive`
-  (`section="NPCs"` → `Archive/NPCs/` only); `section="Archive"` under
-  `archive` equals unsectioned `archive`; strays at `Archive/*.md` visible
-  in whole-archive queries; contradiction and bad-token refusals; `both`
-  backward-identical to today plus the `archived` field; sentinel row
-  unchanged; root docs present under `live`.
-- **Store, `list_entities`:** the same matrix; `archived` present and
-  correct on every row.
+  (`section="NPCs"` → `Archive/NPCs/` only); sectioned `both` is the
+  union (`section="NPCs"` finds hits in `NPCs/` *and* `Archive/NPCs/`,
+  correctly labelled); `section="Archive"` under `archive` and `both`
+  equals unsectioned `archive`; unsectioned `both` behaves as today plus
+  the `archived` field; strays at `Archive/*.md` visible in whole-archive
+  and unsectioned-`both` queries but no mirror section; contradiction and
+  bad-token refusals; sentinel row unchanged; root docs present under
+  `live`.
+- **Store, `list_entities`:** the same matrix — in particular
+  `list_entities("NPCs")` includes `Archive/NPCs/` rows marked
+  `archived: true`; `archived` present and correct on every row.
 - **Store, `overview`:** `archive_sections` counts by mirror; stray files
   counted in the `Archive` total but no breakdown entry; key absent when no
   archive dir exists; `sections` byte-identical to today.
@@ -229,11 +248,13 @@ covers it.
   construction): simplest and fully backward-compatible, but makes
   "archived NPCs" inexpressible as a filter — the mirror layout exists
   precisely to keep that addressable.
-- **Mirror-section semantics everywhere** (archived files match both
-  `Archive` and their mirror section under every scope): conceptually
-  uniform, but sectioned listings under the default scope would include
-  archived rows — revising #62's "live section listings stay uninflated"
-  record for no gain the scope-resolved shape doesn't already provide.
+- **Asymmetric scope-resolution** (the first draft of this spec: mirror
+  resolution only under `scope="archive"`, sectioned `both` stays
+  backward-identical, returning live rows only): rejected on review — an
+  explicit `scope="both"` that does not mean both is a trap, the
+  backward-compat it bought was internal-only (nothing released has seen
+  #62's behavior), and hiding archived rows from sectioned listings hides
+  exactly the names #62's collision check makes unavailable for reuse.
 - **`all` as the union token:** invites "all of what?"; with exactly two
   structurally-guaranteed trees, `both` says it.
 - **Per-section live/archived count pairs in `overview`** (restructuring
