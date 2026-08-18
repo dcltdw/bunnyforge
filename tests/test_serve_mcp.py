@@ -107,49 +107,44 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             {"campaign_overview", "list_entities", "read_entity", "search",
              "generate_names"}, names)
 
-    async def test_staging_tools_always_registered(self):
+    async def test_draft_tools_always_registered(self):
+        # The drafts directory is the agent's own outbox: writing to it and
+        # reading it back need no flag; nothing here can reach canon.
         server = serve_mcp.build_server(scaffold(self))
         names = {t.name for t in await server.list_tools()}
-        self.assertLessEqual({"save_draft", "propose_revision"}, names)
+        self.assertLessEqual(
+            {"save_draft", "propose_revision", "update_draft", "list_drafts", "read_draft"},
+            names)
 
-    async def test_staging_read_tools_always_registered(self):
-        # Staging is the agent's own inbox, so reading it back needs no flag:
-        # nothing here can reach canon.
-        server = serve_mcp.build_server(scaffold(self))
-        names = {t.name for t in await server.list_tools()}
-        self.assertLessEqual({"list_staged", "read_staged"}, names)
-
-    async def test_list_staged_reports_what_was_staged(self):
+    async def test_list_drafts_reports_what_was_drafted(self):
         store = scaffold(self)
         server = serve_mcp.build_server(store)
-        await server.call_tool(
-            "save_draft", {"section": "NPCs", "name": "Cho", "content": "x"})
-        payload = await self._text(await server.call_tool("list_staged", {}))
-        self.assertIn("_ExtractInbound/NPCs/Cho.md", payload)
-        self.assertIn("draft", payload)
+        await server.call_tool("save_draft", {
+            "section": "NPCs", "name": "Cho", "content": "x"})
+        payload = await self._text(await server.call_tool("list_drafts", {}))
+        self.assertIn("_AgentDrafts/NPCs/cho.md", payload)
 
-    async def test_read_staged_round_trips_a_draft(self):
+    async def test_read_draft_round_trips(self):
         store = scaffold(self)
         server = serve_mcp.build_server(store)
-        await server.call_tool(
-            "save_draft", {"section": "NPCs", "name": "Cho",
-                           "content": "---\ntitle: Cho\n---\nthe smuggler\n"})
+        await server.call_tool("save_draft", {
+            "section": "NPCs", "name": "Cho", "content": "draft body"})
         payload = await self._text(await server.call_tool(
-            "read_staged", {"path": "_ExtractInbound/NPCs/Cho.md"}))
-        self.assertIn("the smuggler", payload)
+            "read_draft", {"path": "_AgentDrafts/NPCs/cho.md"}))
+        self.assertIn("draft body", payload)
 
-    async def test_read_staged_refuses_a_canonical_path(self):
-        # The two read doors stay separate: read_staged must not become a
+    async def test_read_draft_refuses_a_canonical_path(self):
+        # The two read doors stay separate: read_draft must not become a
         # second way into canon.
         server = serve_mcp.build_server(scaffold(self))
         with self.assertRaises(Exception) as ctx:
             await server.call_tool(
-                "read_staged", {"path": "NPCs/kim-ha-eun.md"})
+                "read_draft", {"path": "NPCs/kim-ha-eun.md"})
         self.assertIn("read_entity", str(ctx.exception))
 
     async def test_write_entity_only_with_the_flag(self):
-        # The gate is the whole safety story: staging is always available
-        # because it cannot reach canon, and canon is reachable only
+        # The gate is the whole safety story: drafts are always available
+        # because they cannot reach canon, and canon is reachable only
         # because someone passed a per-run flag.
         store = scaffold(self)
         off = {t.name for t in await serve_mcp.build_server(store).list_tools()}
@@ -157,14 +152,16 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             store, allow_direct_edits=True).list_tools()}
         self.assertNotIn("write_entity", off)
         self.assertIn("write_entity", on)
+        self.assertNotIn("promote_draft", off)
+        self.assertIn("promote_draft", on)
 
-    async def test_save_draft_lands_in_staging(self):
+    async def test_save_draft_lands_in_the_drafts_dir(self):
         store = scaffold(self)
-        await serve_mcp.build_server(store).call_tool(
-            "save_draft", {"section": "NPCs", "name": "Cho",
-                           "content": "---\ntitle: Cho\n---\n"})
+        server = serve_mcp.build_server(store)
+        await server.call_tool("save_draft", {
+            "section": "NPCs", "name": "Cho", "content": "x"})
         self.assertTrue(
-            (store.ws.root / "_ExtractInbound/NPCs/Cho.md").is_file())
+            (store.ws.root / "_AgentDrafts/NPCs/cho.md").is_file())
 
     async def test_every_tool_carries_a_description(self):
         # The description is how the remote agent decides to call a tool at
@@ -219,6 +216,25 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         uris = {str(r.uri) for r in await server.list_resources()}
         self.assertNotIn("bunnyforge://doctrine/situation-design.md", uris)
+
+    async def test_inbound_tools_always_registered(self):
+        server = serve_mcp.build_server(scaffold(self))
+        names = {t.name for t in await server.list_tools()}
+        self.assertLessEqual({"list_inbound", "read_inbound"}, names)
+
+    async def test_inbound_descriptions_carry_the_contract(self):
+        # Regression: the old list_staged description said the opposite
+        # ("use it to pick up drafts"), actively nudging the agent to read
+        # the GM's queue unbidden. The contract phrase is load-bearing.
+        server = serve_mcp.build_server(scaffold(self))
+        # The MCP SDK derives tool descriptions from docstrings and preserves
+        # their line breaks, so the contract sentence may span lines in the
+        # source. Normalize whitespace so we can pin the phrase itself
+        # rather than its typography.
+        descs = {t.name: " ".join((t.description or "").split())
+                 for t in await server.list_tools()}
+        for name in ("list_inbound", "read_inbound"):
+            self.assertIn("only when the GM asks", descs[name])
 
     async def test_streamable_app_is_asgi(self):
         server = serve_mcp.build_server(scaffold(self))

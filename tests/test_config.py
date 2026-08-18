@@ -246,25 +246,68 @@ class TestConfigLoad(unittest.TestCase):
             _config.load(cfg)
         self.assertIn("must be a table of strings", str(ctx.exception))
 
-    def test_staging_dir_defaults_to_extract_inbound(self):
-        # Where material written from outside the workspace lands to await
-        # extraction. The default matches the existing convention, and is
-        # already in the default exclude_dirs -- staged drafts are meant to
-        # be invisible to every walk until a human promotes them.
+    def test_inbound_dir_defaults_to_extract_inbound(self):
+        # The GM's inbound queue: material authored elsewhere, awaiting
+        # extraction. Excluded from every walk unconditionally (below).
         cfg = _config.load(self._ws(MINIMAL))
-        self.assertEqual(cfg.staging_dir, "_ExtractInbound")
-        self.assertIn(cfg.staging_dir, cfg.exclude_dirs)
+        self.assertEqual(cfg.inbound_dir, "_ExtractInbound")
+        self.assertIn(cfg.inbound_dir, cfg.exclude_dirs)
 
-    def test_staging_dir_honours_explicit_override(self):
+    def test_drafts_dir_defaults_to_agent_drafts(self):
+        cfg = _config.load(self._ws(MINIMAL))
+        self.assertEqual(cfg.drafts_dir, "_AgentDrafts")
+        self.assertIn(cfg.drafts_dir, cfg.exclude_dirs)
+
+    def test_special_dirs_are_excluded_even_when_exclude_dirs_omits_them(self):
+        # No configuration may un-exclude either special directory: a
+        # workspace that customised exclude_dirs without them would silently
+        # serve agent drafts as canon.
         cfg = _config.load(self._ws(
-            MINIMAL + '\n[workspace]\nstaging_dir = "_Inbox"\n'))
-        self.assertEqual(cfg.staging_dir, "_Inbox")
+            MINIMAL + '\n[workspace]\nexclude_dirs = ["docs"]\n'))
+        self.assertIn("_ExtractInbound", cfg.exclude_dirs)
+        self.assertIn("_AgentDrafts", cfg.exclude_dirs)
 
-    def test_staging_dir_wrong_type_raises(self):
+    def test_overridden_special_dirs_are_auto_excluded_too(self):
+        cfg = _config.load(self._ws(
+            MINIMAL +
+            '\n[workspace]\ninbound_dir = "_Inbox"\ndrafts_dir = "_Outbox"\n'))
+        self.assertEqual(cfg.inbound_dir, "_Inbox")
+        self.assertEqual(cfg.drafts_dir, "_Outbox")
+        self.assertIn("_Inbox", cfg.exclude_dirs)
+        self.assertIn("_Outbox", cfg.exclude_dirs)
+
+    def test_staging_dir_key_is_refused_naming_the_rename(self):
+        # load() ignores unknown keys, so without this check an old
+        # staging_dir key would be silently dropped — a behaviour change
+        # with no error.
         with self.assertRaises(_config.ConfigError) as ctx:
             _config.load(self._ws(
-                MINIMAL + '\n[workspace]\nstaging_dir = ["x"]\n'))
-        self.assertIn("staging_dir", str(ctx.exception))
+                MINIMAL + '\n[workspace]\nstaging_dir = "_Inbox"\n'))
+        self.assertIn("inbound_dir", str(ctx.exception))
+
+    def test_inbound_and_drafts_dir_wrong_type_raises(self):
+        for key in ("inbound_dir", "drafts_dir"):
+            with self.assertRaises(_config.ConfigError) as ctx:
+                _config.load(self._ws(
+                    MINIMAL + f'\n[workspace]\n{key} = ["x"]\n'))
+            self.assertIn(key, str(ctx.exception))
+
+    def test_special_dir_naming_a_section_raises(self):
+        # drafts_dir = "Ideas" would auto-exclude a canon section from
+        # every walker — silently, since auto-exclusion happens at load.
+        for key, section in (("drafts_dir", "Ideas"), ("inbound_dir", "Briefs")):
+            with self.assertRaises(_config.ConfigError) as ctx:
+                _config.load(self._ws(
+                    MINIMAL + f'\n[workspace]\n{key} = "{section}"\n'))
+            self.assertIn(section, str(ctx.exception))
+
+    def test_inbound_and_drafts_dir_must_differ(self):
+        # Identical values would recreate the conflation this split kills.
+        with self.assertRaises(_config.ConfigError) as ctx:
+            _config.load(self._ws(
+                MINIMAL +
+                '\n[workspace]\ninbound_dir = "_X"\ndrafts_dir = "_X"\n'))
+        self.assertIn("_X", str(ctx.exception))
 
 
 class TestWorkspace(unittest.TestCase):

@@ -96,43 +96,66 @@ are missing.
 `situation-design.md`, `AGENTS.md`) is served as MCP *resources* — tell
 the agent to load them before it writes anything for this campaign.
 
-**Write back, into staging:**
+**Write drafts:**
 
 | tool | writes to |
 |---|---|
-| `save_draft(section, name, content)` | `<staging_dir>/<section>/<name>.md` — new content only, never overwrites |
-| `propose_revision(path, content)` | `<staging_dir>/<path>`, mirroring the canonical path, so you review it as a diff |
+| `save_draft(section, name, content, subdir=None)` | `<drafts_dir>/<section>/[<subdir>/]<slug>.md` — new content; names are slugged to kebab-case; never overwrites |
+| `propose_revision(path, content)` | `<drafts_dir>/<path>`, mirroring the canonical path, so you review it as a diff; one pending proposal per file |
+| `update_draft(path, content)` | an existing draft — the one deliberate overwrite door, for iterating across sessions |
 
-Both land in the workspace's staging directory (`staging_dir`, default
-`_ExtractInbound`) and go no further. That directory is one of
-`exclude_dirs`, so staged material stays invisible to the canon read tools
-above and to every other bunnyforge command until you promote it by hand —
-it flows through whatever extraction workflow your `AGENTS.md` already
-defines. **In the default configuration the agent cannot alter canon at
-all.** The server stages; deciding what becomes canon stays yours.
+All of it lands in the agents' drafts directory (`drafts_dir`, default
+`_AgentDrafts`) and goes no further. That directory is always excluded
+from the canon read tools — whatever `exclude_dirs` says — so drafts stay
+invisible to every other bunnyforge command until you promote them.
+**In the default configuration the agent cannot alter canon at all** —
+promotion is manual and yours, done by hand outside any tool, unless you
+start the server with `--allow-direct-edits`.
 
-**Read back its own staging:** `list_staged()` gives every staged file with
-its kind (`draft` or `revision`); `read_staged(path)` returns one in full.
-They are the one deliberate window into the staging directory, and they say
-so — their tool descriptions tell the agent the material is unreviewed and
-not canon. They exist so it can pick up its own drafts from an earlier
-session and merge them rather than write them again; without them it could
-write into staging and never see the result, not even its own work. They
-reach nothing else: a canonical path handed to `read_staged` is refused.
-Promotion is unchanged — still manual, still yours.
+**Read drafts back:** `list_drafts()` gives every pending draft with its
+kind (`new` or `revision`), title, summary, and — for revisions — whether
+canon changed underneath the proposal (`stale`). `read_draft(path)`
+returns one in full. They exist so the agent picks up its own earlier
+work and merges rather than re-writing; a `_`-prefixed subdirectory
+(say, `_AgentDrafts/_Rejected/`, if you use rejection-by-moving) is
+never listed or read, so rejected material stays rejected.
+`campaign_overview`'s `drafts_pending` count is the discovery hook for
+this — it tells the agent there is earlier work worth resuming before it
+calls `list_drafts()`.
+
+**The inbound queue — read only when you ask:** `_ExtractInbound/`
+(`inbound_dir`, also always excluded from the canon read tools regardless
+of `exclude_dirs`) is yours: material you authored elsewhere, awaiting
+extraction. `list_inbound()` lists every live file — all formats, each
+marked `readable` or not — and `read_inbound(path)` returns text formats
+(`.md`, `.txt`, `.html`, `.htm`; anything else is listed but refused
+with a convert-it hint, and undecodable bytes are replaced rather than
+crashing). Both tools' descriptions carry your AGENTS.md contract: the
+agent calls them **only when you ask it to extract**. It learns the
+queue is non-empty from `campaign_overview`'s `inbound_pending` count —
+which permits noticing and offering, never unbidden reading.
+`_ExtractInbound/_Done/` and any other `_`-prefixed area are invisible
+to both tools, exactly like `_Ignore/`.
 
 **Write back, into canon — only if you ask for it:**
 
     bunnyforge serve-mcp --allow-direct-edits ...
 
-registers a third tool, `write_entity(path, content)`, which edits a
+registers two more tools. `write_entity(path, content)` edits a
 canonical file in place and commits each edit with a
-`serve-mcp: edit <path>` message. It refuses outside a git repository:
-without history there is no review and no undo, and that is the only
-thing that makes editing canon defensible. It is a per-run flag rather
-than a config key on purpose — trading the staging boundary for git
-history should be a decision you make when starting the server, not a
-setting that quietly persists.
+`serve-mcp: edit <path>` message. `promote_draft(path)` moves a draft
+you have just approved in chat to its canonical location (derived from
+the draft path — slugged drafts mirror canon) and commits it as
+`serve-mcp: promote <path>`; a revision whose base no longer matches
+canon is refused, never silently applied over your interim edits.
+Promotion deliberately does not touch `compendium.md` or
+`front-burner.md` — index updates flow through `propose_revision` as
+ever. Both tools refuse outside a git repository: without history there
+is no review and no undo, and that is the only thing that makes
+changing canon defensible. It is a per-run flag rather than a config
+key on purpose — trading the review boundary for git history should be
+a decision you make when starting the server, not a setting that
+quietly persists.
 
 Publishing is structurally absent in every mode: no tool here can reach
 `Export/` or the wiki, so a remote agent cannot leak GM-only material to

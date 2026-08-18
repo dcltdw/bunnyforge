@@ -77,13 +77,15 @@ propose changes to canon — not to the perception record.
 
 ## Extracting from _ExtractInbound/
 
-`_ExtractInbound/` is a staging area for material brought into the workspace —
-typically wiki pages unpacked from a tarball. It is distinct from `_Ignore/`,
+`_ExtractInbound/` is an inbound queue for material brought into the workspace
+— typically wiki pages unpacked from a tarball. It is distinct from `_Ignore/`,
 which is never read.
 
 - **Read it only when I ask you to extract.** Do not act on its contents
   proactively. You may notice it is non-empty and offer; you may not process it
   unbidden.
+- **The MCP agent reaches this queue through `list_inbound` and
+  `read_inbound`, under exactly these rules.**
 - **Nothing in it is canon.** It is unreviewed source, and a copy — the wiki is
   the source of truth until the material is extracted into proper entity files.
 - **On any conflict, ask — this is "Clarify before proceeding" applied here.**
@@ -94,10 +96,11 @@ which is never read.
   guard captain who retires and a guard captain who is killed are describing two
   people, not one fact to reconcile.) When in doubt, surface it and let me
   answer.
-- **Extract, show me, confirm, then move — never delete.** Once I confirm an
-  extraction, move the spent source into `_ExtractInbound/_Done/`. Do not delete
-  it; I clear `_Done/` myself. And never move anything before I have confirmed.
-  The active directory emptying is how we track what remains to process.
+- **Extract, show me, confirm, then move — never delete.** Once I confirm
+  an extraction, move the spent source into `_ExtractInbound/_Done/` — or,
+  if you cannot move files, say so and I will. Do not delete it; I clear
+  `_Done/` myself. And never move anything before I have confirmed. The
+  active directory emptying is how we track what remains to process.
 - **`_ExtractInbound/_Done/` is never read**, exactly like `_Ignore/`. It holds
   processed source awaiting my manual cleanup.
 
@@ -176,9 +179,14 @@ include the separator, even if the GM notes section is empty. A handout is a
   no precedent (see the deletion rule below). It is not canon, and it is not a
   fallback when an answer cannot be found elsewhere. The only exception is
   a file in it that I name explicitly and ask you to work on.
-- Do not read `_ExtractInbound/` unless I ask you to extract from it. It is a
-  staging area for imported material, none of it canon. See its own section
+- Do not read `_ExtractInbound/` unless I ask you to extract from it. It is an
+  inbound queue for imported material, none of it canon. See its own section
   below.
+- `_AgentDrafts/` is the agents' outbox: drafts and proposed revisions
+  awaiting my review, written by the MCP tools (or by you, if I ask you to
+  draft something). Read it freely; nothing in it is canon. If I reject a
+  draft I delete it or move it to `_AgentDrafts/_Rejected/`, which is
+  never read, like `_Ignore/`.
 
 ## Speculative material stays speculative
 
