@@ -91,21 +91,28 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     @server.tool()
     def campaign_overview() -> dict:
         """Get your bearings in one call: the campaign's name, each section
-        with how many entities it holds, the current front-burner and
-        open-questions documents, and two counts — drafts_pending (your
-        own unpromoted drafts; list_drafts to resume them) and
-        inbound_pending (files in the GM's inbound queue). If
-        inbound_pending is non-zero you may mention it and offer to
-        extract; do not list or read the queue unless the GM asks. Call
-        this before anything else."""
+        with how many entities it holds (the Archive count is the flat
+        total; archive_sections breaks it down by mirrored section), the
+        current front-burner and open-questions documents, and two
+        counts — drafts_pending (your own unpromoted drafts; list_drafts
+        to resume them) and inbound_pending (files in the GM's inbound
+        queue). If inbound_pending is non-zero you may mention it and
+        offer to extract; do not list or read the queue unless the GM
+        asks. Call this before anything else."""
         return store.overview()
 
     @server.tool()
-    def list_entities(section: str) -> list[dict]:
-        """List one section's files with their titles and one-line
-        summaries. Use it to see what already exists before inventing
-        something new."""
-        return store.list_entities(section)
+    def list_entities(section: str, scope: str = "both") -> list[dict]:
+        """List one section's files with titles, one-line summaries, and
+        an archived flag. section names the content section in either
+        tree: the default scope="both" lists live and archived members
+        together (section="NPCs" covers NPCs/ and Archive/NPCs/), while
+        scope="live" or scope="archive" narrows to one tree. Use it to
+        see what already exists before inventing something new —
+        archived names are still taken. For creative work the scope is
+        the GM's call: ask at task start if the request has not said
+        (the AGENTS.md doctrine resource carries the rule)."""
+        return store.list_entities(section, scope)
 
     @server.tool()
     def read_entity(path: str) -> str:
@@ -114,11 +121,17 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         return store.read_entity(path)
 
     @server.tool()
-    def search(query: str, section: str | None = None) -> list[dict]:
+    def search(query: str, section: str | None = None,
+               scope: str = "both") -> list[dict]:
         """Search the workspace for a phrase, returning each file that
-        matches and the text around the match. Use it to check what has
-        already been established about a name, place, or idea."""
-        return store.search(query, section)
+        matches, the text around the match, and an archived flag. scope
+        narrows retrieval to live canon ("live"), archived canon
+        ("archive"), or both (default — every hit is labelled). Use it
+        to check what has already been established about a name, place,
+        or idea. For creative work the scope is the GM's call: ask at
+        task start if the request has not said (the AGENTS.md doctrine
+        resource carries the rule)."""
+        return store.search(query, section, scope)
 
     @server.tool()
     def generate_names(culture: str, count: int = 10) -> dict:

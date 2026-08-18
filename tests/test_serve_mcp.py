@@ -260,6 +260,37 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         self.assertTrue(callable(serve_mcp.build_app(server)))
 
+    async def test_search_and_list_entities_expose_scope(self):
+        server = serve_mcp.build_server(scaffold(self))
+        tools = {t.name: t for t in await server.list_tools()}
+        for name in ("search", "list_entities"):
+            scope = tools[name].inputSchema["properties"]["scope"]
+            self.assertEqual(scope.get("default"), "both", name)
+
+    async def test_scope_guidance_reaches_the_descriptions(self):
+        # The description is the API the remote agent reads: it must name
+        # the scope choices and say the scope is the GM's call to make.
+        server = serve_mcp.build_server(scaffold(self))
+        descs = {t.name: " ".join((t.description or "").split())
+                 for t in await server.list_tools()}
+        for name in ("search", "list_entities"):
+            self.assertIn("scope", descs[name], name)
+            self.assertIn("ask", descs[name], name)
+        self.assertIn("archive_sections", descs["campaign_overview"])
+
+    async def test_search_scope_live_excludes_archived_hits(self):
+        store = scaffold(self)
+        arch = store.ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        (arch / "old.md").write_text(
+            "---\ntitle: Old\nsummary: Retired.\n---\nShe knows the "
+            "tides.\n", encoding="utf-8")
+        server = serve_mcp.build_server(store)
+        payload = await self._text(await server.call_tool(
+            "search", {"query": "tides", "scope": "live"}))
+        self.assertIn("kim-ha-eun", payload)
+        self.assertNotIn("Archive/NPCs/old.md", payload)
+
 
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
