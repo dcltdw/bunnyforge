@@ -483,7 +483,7 @@ class TestGeneratedConfig(unittest.TestCase):
             cfg.exclude_dirs,
             frozenset(_config._DEFAULTS["exclude_dirs"])
             | _config.MANDATORY_EXCLUDES
-            | {cfg.inbound_dir, cfg.drafts_dir})
+            | {_config._DEFAULTS["inbound_dir"], _config._DEFAULTS["drafts_dir"]})
 
     def test_name_and_namespace_carry_the_substituted_values(self):
         cfg = self._config_of()
