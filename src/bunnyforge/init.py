@@ -71,9 +71,11 @@ CONTENT_DIRS = (
 
 # The root docs with no canonical in-repo source: the in-repo copies are live
 # campaign state rather than doctrine, so these are authored generically for
-# data/root/ instead.
-ROOT_STUBS = ("compendium.md", "front-burner.md", "open-questions.md",
-              "out-of-game.md", "tickets.md")
+# data/root/ instead. campaign-doctrine.md is here for the opposite reason --
+# it is the GM-owned half of the doctrine split, and a canonical would put it
+# back under the drift guard the split exists to get it out from under.
+ROOT_STUBS = ("campaign-doctrine.md", "compendium.md", "front-burner.md",
+              "open-questions.md", "out-of-game.md", "tickets.md")
 
 MANIFEST = (
     Packaged("campaign.toml.in", CONFIG_NAME, None, True),

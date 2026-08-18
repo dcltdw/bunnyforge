@@ -216,6 +216,26 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         uris = {str(r.uri) for r in await server.list_resources()}
         self.assertNotIn("bunnyforge://doctrine/situation-design.md", uris)
+        # docs/serve-mcp.md promises that "a workspace that predates it
+        # [campaign-doctrine.md] simply serves the other three" -- scaffold()
+        # does not create campaign-doctrine.md, so it must not be listed
+        # either, the same way an absent situation-design.md is not listed.
+        self.assertNotIn("bunnyforge://doctrine/campaign-doctrine.md", uris)
+
+    async def test_campaign_doctrine_is_served_when_present(self):
+        # The MCP agent follows no include directive: a "see also" inside
+        # AGENTS.md reaches it as literal text and nothing more. The GM-owned
+        # half is visible to it only because the server lists it too.
+        store = scaffold(self)
+        (store.ws.root / "campaign-doctrine.md").write_text(
+            "# Campaign Doctrine\nThe Language/ subtree has its own rules.\n",
+            encoding="utf-8")
+        server = serve_mcp.build_server(store)
+        uris = {str(r.uri) for r in await server.list_resources()}
+        self.assertIn("bunnyforge://doctrine/campaign-doctrine.md", uris)
+        parts = list(await server.read_resource(
+            "bunnyforge://doctrine/campaign-doctrine.md"))
+        self.assertIn("own rules", "".join(p.content for p in parts))
 
     async def test_inbound_tools_always_registered(self):
         server = serve_mcp.build_server(scaffold(self))

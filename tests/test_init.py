@@ -29,12 +29,12 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _root_doc_only_workspace(case: unittest.TestCase) -> Path:
-    """A workspace holding the 8 default root docs and nothing else.
+    """A workspace holding the 9 default root docs and nothing else.
 
     The shape a fresh `init` produces before any entity file exists, and so
     the shape every wikilink in the packaged doctrine has to resolve against.
     The packaged AGENTS.md is written in — the copy `init` actually ships;
-    the other seven root docs are one-line stubs, because all this needs of
+    the other eight root docs are one-line stubs, because all this needs of
     them is that they be link targets.
     """
     tmp = Path(case.enterContext(tempfile.TemporaryDirectory())).resolve()
@@ -73,6 +73,19 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
             broken, [],
             "AGENTS.md links to something a fresh workspace does not have, "
             "so `init` cannot ship it verbatim and still pass the gate")
+
+    def test_the_read_order_points_at_campaign_doctrine(self):
+        # The include is prose, not an import: nothing can force an agent to
+        # follow it, and the five root docs already in this list rest on the
+        # same footing. What IS enforceable is that the pointer exists and
+        # that its target resolves -- the second half is the wikilink test
+        # above, which is why both live in this class.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("## Read order", doctrine)
+        read_order = doctrine.split("## Read order", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("[[campaign-doctrine]]", read_order,
+                      "AGENTS.md no longer tells an agent to read the "
+                      "campaign-owned half; the split is inert without it")
 
 
 def _packaged_data_root() -> Path:
@@ -458,6 +471,17 @@ class TestWhatInitWrites(unittest.TestCase):
         # doc, so init leaves it to the author.
         self.assertFalse((_scaffold(self) / "reanchor.txt").exists())
 
+    def test_writes_the_campaign_doctrine_stub(self):
+        # The GM-owned half of the doctrine split (#32). It lands like the
+        # other root stubs -- authored, canonical=None -- because no packaged
+        # version of it may ever overwrite what a campaign writes there. That
+        # is the whole point: AGENTS.md becomes replaceable only once there is
+        # somewhere else for campaign-specific rules to live.
+        stub = _scaffold(self) / "campaign-doctrine.md"
+        self.assertTrue(stub.is_file())
+        self.assertEqual(stub.read_bytes(),
+                         init.packaged_bytes("root/campaign-doctrine.md"))
+
 
 class TestGeneratedConfig(unittest.TestCase):
     """The generated campaign.toml round-trips through _config.load, and every
@@ -508,6 +532,21 @@ class TestGeneratedConfig(unittest.TestCase):
         cfg = self._config_of(name='My "Great" Campaign\\Two')
         self.assertEqual(cfg.name, 'My "Great" Campaign\\Two')
         self.assertEqual(cfg.namespace, "mygreatcampaigntwo")
+
+    def test_the_commented_root_docs_example_names_every_default(self):
+        # campaign.toml.in teaches what is overridable by showing each default
+        # commented out. That is a second copy of _DEFAULTS, and the class's
+        # docstring is right that a second copy is a second thing to drift --
+        # so guard the one list this change touches rather than trusting it.
+        # Anchored to the commented `root_docs = [...]` block itself (a bare
+        # assertIn would match a quoted name anywhere in the file) and
+        # bidirectional, so a default missing from the block *and* a stale
+        # entry left behind after a default was removed both fail.
+        template = init.packaged_bytes("campaign.toml.in").decode("utf-8")
+        match = re.search(r"# root_docs\b.*?\]", template, re.DOTALL)
+        self.assertIsNotNone(match, "no commented root_docs example found")
+        block_docs = set(re.findall(r'"([^"]+)"', match.group()))
+        self.assertEqual(block_docs, set(_config._DEFAULTS["root_docs"]))
 
 
 def _scrubbed_env(**extra: str) -> dict[str, str]:
