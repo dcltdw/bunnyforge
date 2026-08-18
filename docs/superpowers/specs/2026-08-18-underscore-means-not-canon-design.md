@@ -83,7 +83,7 @@ Settled in brainstorming with the GM, 2026-08-18:
 | Player export of archive | Yes, per normal visibility rules. |
 | Compendium indexing of archive | Yes, required (keyed off the mirrored inner section). |
 | Write tools on archive | Yes, ordinary canon. |
-| Name collisions | Forbidden: checkup **error** on any stem/alias resolving to >1 walked file — live-vs-archive *and* live-vs-live. Rename-on-retire is the discipline. |
+| Name collisions | Forbidden: checkup **error** on any stem/alias resolving to >1 walked *authority* file (entity + root categories) — live-vs-archive *and* live-vs-live. Rename-on-retire is the discipline. Inherit files (Briefs, Perceptions) are exempt: the doctrine *mandates* their stems match their subject's (doctrine:318), and they are never exported. Amended 2026-08-18 during planning — the unrestricted version would error on every properly-named brief. |
 | Canon walkers adopt the general prefix rule? | Yes — skip/refuse any `_` component (safe now that the meaning is defined). |
 | `.`-prefix handling | Uniform: invisible everywhere (walkers, drafts, inbound). |
 | Default read contract for an unnamed `_` dir | Never read unless the GM asks. Campaign exceptions go in `campaign-doctrine.md`. |
@@ -164,11 +164,21 @@ for machinery-named files in content dirs — they are sanctioned now.
 
 `review.check_name_collisions` (registered `"name-collisions"`, in the
 `checkup` suite): any stem or alias that `target_index` maps to more than one
-walked file is an **error** naming every colliding path. Scope: all
-duplicates — live-vs-archive and live-vs-live — because the exporter refuses
-both identically (evidence §6). Deliberate duplicates are acceptable via the
-existing `[[accept]]` mechanism. Fresh workspaces are clean, so the 0/0 gate
-holds.
+walked **authority** file — categories `entity` and `root` — is an **error**
+naming every colliding path. Live-vs-archive and live-vs-live alike, because
+the exporter refuses both identically (evidence §6).
+
+**Inherit-category files (Briefs, Perceptions) are exempt**, as colliders and
+collidees: the doctrine *mandates* that a brief's stem match its subject's
+(`Briefs/session-014/mira-venn.md` pairs with `NPCs/mira-venn.md`,
+doctrine:318), Perceptions follows the same subject-naming pattern, and
+inherit files are never exported — so their duplication is designed
+subordination, not ambiguity of authority. (Amendment, 2026-08-18: discovered
+during planning; the unrestricted "all walked files" version would have
+errored on every properly-named brief.)
+
+Deliberate duplicates are acceptable via the existing `[[accept]]` mechanism.
+Fresh workspaces are clean, so the 0/0 gate holds.
 
 This check is what enforces rename-on-retire: archiving a file whose name its
 replacement will reuse forces a rename at retire time, keeping every file
