@@ -72,7 +72,7 @@ VALID_VISIBILITY = {"gm-only", "player-visible", "mixed"}
 
 def write_html(suite: str, findings: list[Finding], workspace: Path,
               accepted: list[AcceptedEntry] = ()) -> Path:
-    """Write Reviews/<suite>.html under `workspace` and return its path.
+    """Write _Reviews/<suite>.html under `workspace` and return its path.
 
     Takes the root rather than a whole Workspace, matching the convention the
     checks below follow: each takes exactly what it needs, and this needs no
@@ -134,7 +134,7 @@ def write_html(suite: str, findings: list[Finding], workspace: Path,
 </table>
 </body></html>
 """
-    out_dir = workspace / "Reviews"
+    out_dir = workspace / "_Reviews"
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{suite}.html"
     dest.write_text(doc, encoding="utf-8")
@@ -720,7 +720,7 @@ def main(argv: list[str] | None = None, *, fetch_runner=None) -> int:
     parser.add_argument("suite", nargs="?", default="checkup",
                         help=f"Suite to run (default: checkup). Known: {', '.join(SUITES)}")
     parser.add_argument("--html", action="store_true",
-                        help="Also write an HTML report to Reviews/<suite>.html")
+                        help="Also write an HTML report to _Reviews/<suite>.html")
     parser.add_argument(
         "--workspace", metavar="PATH",
         help="Campaign workspace root (default: $BUNNYFORGE_WORKSPACE, else "

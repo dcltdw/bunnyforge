@@ -612,13 +612,13 @@ class TestMainWorkspace(unittest.TestCase):
             # exit 0 exactly. Accepting 1 as well would let a fixture that
             # started erroring pass unnoticed.
             self.assertEqual(rc, 0, err)
-            self.assertTrue((root / "Reviews" / "checkup.html").is_file())
+            self.assertTrue((root / "_Reviews" / "checkup.html").is_file())
             # ...and the printed path is workspace-relative, not absolute.
             # Asserting the tail alone does not show that: an absolute
-            # /tmp/.../Reviews/checkup.html contains it too. The literal must
+            # /tmp/.../_Reviews/checkup.html contains it too. The literal must
             # include what comes immediately BEFORE the path, so anything
-            # printed between "HTML report: " and "Reviews/" fails.
-            self.assertIn("HTML report: Reviews/checkup.html", out)
+            # printed between "HTML report: " and "_Reviews/" fails.
+            self.assertIn("HTML report: _Reviews/checkup.html", out)
 
     def test_missing_workspace_returns_nonzero_with_a_clear_message(self):
         # --workspace pointing at a directory with no campaign.toml is an
@@ -639,7 +639,7 @@ class TestHtml(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as d:
             dest = r.write_html("checkup", findings, Path(d))
-            self.assertEqual(dest, Path(d) / "Reviews" / "checkup.html")
+            self.assertEqual(dest, Path(d) / "_Reviews" / "checkup.html")
             self.assertTrue(dest.is_file())
             html_text = dest.read_text(encoding="utf-8")
             self.assertIn("NPCs/b.md", html_text)

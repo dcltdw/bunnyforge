@@ -5,7 +5,7 @@ Tests for bunnyforge.export_player. Stdlib unittest only — run with:
     python3 -m bunnyforge.run_tests
 
 This is a safety tool: it must never write a `gm-only` file, or GM-only
-content from a `player-visible`/`mixed` file, into Export/. The tests below
+content from a `player-visible`/`mixed` file, into _Export/. The tests below
 check the individual rules, then close with a single paranoid leak test that
 scans every byte written to the output tree for sentinels planted in every
 GM-only construct.
@@ -46,7 +46,7 @@ def make_workspace(root: Path, files: dict) -> Path:
 
 
 def run(root: Path) -> tuple[export_player.ExportResult, Path]:
-    out_dir = root / "Export"
+    out_dir = root / "_Export"
     ws = _config.open_workspace(root)
     result, _log = export_player.run_export(ws, out_dir)
     return result, out_dir
@@ -344,7 +344,7 @@ class TestMain(unittest.TestCase):
             })
             rc, _out, err = self._run_main("--workspace", str(root))
             self.assertEqual(rc, 0, err)
-            self.assertTrue((root / "Export/Mechanics/rule.md").exists())
+            self.assertTrue((root / "_Export/Mechanics/rule.md").exists())
 
     def test_main_returns_nonzero_when_mixed_file_unsplittable(self):
         with tempfile.TemporaryDirectory() as d:
@@ -358,7 +358,7 @@ class TestMain(unittest.TestCase):
     def test_export_dir_follows_the_chosen_workspace(self):
         # The output directory is derived from the resolved workspace, not
         # from a module constant fixed at import: two workspaces must receive
-        # their own Export/, and neither the install repo's nor each other's.
+        # their own _Export/, and neither the install repo's nor each other's.
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             a = make_workspace(d / "a", {
@@ -373,10 +373,10 @@ class TestMain(unittest.TestCase):
             self.assertEqual(self._run_main("--workspace", str(a))[0], 0)
             self.assertEqual(self._run_main("--workspace", str(b))[0], 0)
 
-            self.assertTrue((a / "Export/Mechanics/from-a.md").is_file())
-            self.assertTrue((b / "Export/Mechanics/from-b.md").is_file())
-            self.assertFalse((a / "Export/Mechanics/from-b.md").exists())
-            self.assertFalse((b / "Export/Mechanics/from-a.md").exists())
+            self.assertTrue((a / "_Export/Mechanics/from-a.md").is_file())
+            self.assertTrue((b / "_Export/Mechanics/from-b.md").is_file())
+            self.assertFalse((a / "_Export/Mechanics/from-b.md").exists())
+            self.assertFalse((b / "_Export/Mechanics/from-a.md").exists())
 
     def test_missing_workspace_returns_nonzero_with_a_clear_message(self):
         # --workspace pointing at a directory with no campaign.toml is an

@@ -362,7 +362,7 @@ class TestNewCliSurface(unittest.TestCase):
 
     def test_render_only_still_requires_staging(self):
         with tempfile.TemporaryDirectory() as d:
-            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            make_export(Path(d) / "_Export", {"Mechanics/a.md": "# A\n"})
             rc, _out, err = self._run(["--workspace", str(d), "--render-only"])
             self.assertEqual(rc, 1)
             self.assertIn("--staging", err)
@@ -372,7 +372,7 @@ class TestNewCliSurface(unittest.TestCase):
             (Path(d) / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
-            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            make_export(Path(d) / "_Export", {"Mechanics/a.md": "# A\n"})
             # Wrapped in patch.dict so the pop below is undone on exit
             # regardless of ambient state or test outcome — a bare pop with
             # no restore would permanently delete a pre-existing
@@ -390,7 +390,7 @@ class TestNewCliSurface(unittest.TestCase):
             (Path(d) / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "http://wiki.invalid"\n', encoding="utf-8")
-            make_export(Path(d) / "Export", {"Mechanics/a.md": "# A\n"})
+            make_export(Path(d) / "_Export", {"Mechanics/a.md": "# A\n"})
             with unittest.mock.patch.dict(
                     os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}):
                 rc, _out, err = self._run(["--workspace", str(d)])
@@ -426,7 +426,7 @@ class TestNewCliSurface(unittest.TestCase):
             (Path(d) / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
-            make_export(Path(d) / "Export", {
+            make_export(Path(d) / "_Export", {
                 "Mechanics/open.md": "# Open\n\nSee [[totally-nonexistent]].\n",
             })
             with unittest.mock.patch.dict(
@@ -466,7 +466,7 @@ class TestMainDrivesTheDeploy(unittest.TestCase):
             (d / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
-            make_export(d / "Export", {"Mechanics/open.md": "# Open\n",
+            make_export(d / "_Export", {"Mechanics/open.md": "# Open\n",
                                        "NPCs/ana.md": "# Ana\n"})
             client = FakeClient()
             with unittest.mock.patch.dict(
@@ -496,7 +496,7 @@ class TestMainDrivesTheDeploy(unittest.TestCase):
             (d / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
-            make_export(d / "Export", {"NPCs/ana.md": "# Ana\n"})
+            make_export(d / "_Export", {"NPCs/ana.md": "# Ana\n"})
             client = FakeClient()
             with unittest.mock.patch.dict(
                     os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
@@ -516,7 +516,7 @@ class TestMainDrivesTheDeploy(unittest.TestCase):
             (d / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "test"\n'
                 '[wiki]\nurl = "https://wiki.invalid"\n', encoding="utf-8")
-            make_export(d / "Export", {"NPCs/ana.md": "# Ana\n"})
+            make_export(d / "_Export", {"NPCs/ana.md": "# Ana\n"})
             client = FakeClient()
             with unittest.mock.patch.dict(
                     os.environ, {"BUNNYFORGE_WIKI_TOKEN": "t"}), \
@@ -940,7 +940,7 @@ class TestExportDirComposesWithWorkspace(unittest.TestCase):
 
     A parser-build-time default (the old `default=str(EXPORT_DIR)`) is fixed
     to the install repo, so omitting --export-dir would silently export the
-    wrong workspace's Export/ however --workspace was pointed.
+    wrong workspace's _Export/ however --workspace was pointed.
     """
 
     def test_omitted_export_dir_defaults_to_the_chosen_workspaces_export(self):
@@ -950,7 +950,7 @@ class TestExportDirComposesWithWorkspace(unittest.TestCase):
             ws.mkdir()
             (ws / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "wschosen"\n', encoding="utf-8")
-            make_export(ws / "Export", {"Mechanics/a.md": "# A\n\nbody\n"})
+            make_export(ws / "_Export", {"Mechanics/a.md": "# A\n\nbody\n"})
 
             rc, out, err = run_main([
                 "--render-only",
@@ -971,8 +971,8 @@ class TestExportDirComposesWithWorkspace(unittest.TestCase):
             ws.mkdir()
             (ws / "campaign.toml").write_text(
                 '[campaign]\nnamespace = "wschosen"\n', encoding="utf-8")
-            # The workspace's own Export/ holds a decoy that must not be read.
-            make_export(ws / "Export", {"Mechanics/decoy.md": "# Decoy\n\nx\n"})
+            # The workspace's own _Export/ holds a decoy that must not be read.
+            make_export(ws / "_Export", {"Mechanics/decoy.md": "# Decoy\n\nx\n"})
             make_export(d / "elsewhere", {"Mechanics/a.md": "# A\n\nbody\n"})
 
             rc, _out, err = run_main([

@@ -2,13 +2,13 @@
 
 A test that writes into the real campaign workspace corrupts it silently.
 This has happened twice (issue #61): once leaving fixture files in
-`Perceptions/` and `Export/Mechanics/`, which pushed the export gate's
+`Perceptions/` and `_Export/Mechanics/`, which pushed the export gate's
 staged tree from 10 files to 16 and changed its checksum, and once during
 mutation testing. Neither was caught by a test, a review, or CI -- both
 were caught only by someone recomputing a number they had been told was
 correct.
 
-`Export/`, `Reviews/` and `_Ignore/` are all git-ignored, so `git status`
+`_Export/`, `_Reviews/` and `_Ignore/` are all git-ignored, so `git status`
 stays clean after a leak into any of them. That is why this guard walks the
 filesystem rather than asking git.
 """
@@ -54,11 +54,11 @@ class TestSnapshotScope(unittest.TestCase):
                          "build/tooling noise must not register as a change")
 
     def test_git_ignored_content_directories_are_NOT_ignored(self):
-        # The regression guard for issue #61 itself. Export/ and Reviews/ are
-        # in .gitignore; a leak into either is invisible to `git status`.
+        # The regression guard for issue #61 itself. _Export/ and _Reviews/
+        # are in .gitignore; a leak into either is invisible to `git status`.
         root = _tmp(self)
         base = rt._snapshot(root)
-        for rel in ("Export/Mechanics/leaked.md", "Reviews/checkup.html",
+        for rel in ("_Export/Mechanics/leaked.md", "_Reviews/checkup.html",
                     "_Ignore/scratch.md"):
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ class TestSnapshotScope(unittest.TestCase):
 
         after = rt._snapshot(root)
         self.assertNotEqual(after, base)
-        for rel in ("Export/Mechanics/leaked.md", "Reviews/checkup.html",
+        for rel in ("_Export/Mechanics/leaked.md", "_Reviews/checkup.html",
                     "_Ignore/scratch.md"):
             self.assertIn(rel, after)
 
@@ -154,10 +154,10 @@ class TestTheGuardFiresEndToEnd(unittest.TestCase):
         self.assertNotIn("Traceback", r.stdout + r.stderr)
 
     def test_a_write_into_a_git_ignored_directory_is_caught(self):
-        # Incident 2's exact shape: the leak landed in Export/, where
+        # Incident 2's exact shape: the leak landed in _Export/, where
         # `git status` would never have shown it.
         ws = self._workspace_running(
-            '        p = ROOT / "Export" / "Mechanics" / "leaked.md"\n'
+            '        p = ROOT / "_Export" / "Mechanics" / "leaked.md"\n'
             '        p.parent.mkdir(parents=True, exist_ok=True)\n'
             '        p.write_text("x", encoding="utf-8")')
         r = self._run(ws)

@@ -11,7 +11,7 @@ Merges two sources and invents nothing:
   NPCs/<name>.md              the durable writeup — who they are, always
   Briefs/session-NNN/<name>.md the session brief — what is true this session
 
-Output: Sheets/session-NNN/<name>.html, one page per NPC.
+Output: _Sheets/session-NNN/<name>.html, one page per NPC.
 
 Sheets are regenerable. Anything typed into a sheet's editable regions in the
 browser is preserved across regeneration: the script reads the previous HTML,

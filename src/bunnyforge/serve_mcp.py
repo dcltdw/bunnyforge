@@ -20,7 +20,7 @@ for registration, authorize, and token; bunnyforge owns one decision, a
 consent page checking a pre-shared GM key (_mcp_auth.py).
 
 Publishing is structurally absent, not merely forbidden: no tool here
-touches Export/ or the wiki, so a remote agent cannot leak GM material to
+touches _Export/ or the wiki, so a remote agent cannot leak GM material to
 players even by accident.
 """
 

@@ -24,9 +24,9 @@ from bunnyforge import _workspace
 # Directories and files that change as a side effect of running Python or the
 # local agent tooling, rather than as a side effect of a test writing where it
 # should not. Everything else in the workspace is content -- including the
-# git-ignored Export/, Reviews/ and _Ignore/, which is the whole point: a leak
-# into any of those leaves `git status` clean, which is how two of them went
-# unnoticed (issue #61).
+# git-ignored _Export/, _Reviews/, _Sheets/ and _Ignore/, which is the whole
+# point: a leak into any of those leaves `git status` clean, which is how two
+# of them went unnoticed (issue #61).
 _IGNORED_DIRS = frozenset({".git", "__pycache__", ".superpowers", ".claude"})
 _IGNORED_NAMES = frozenset({".DS_Store"})
 
@@ -168,8 +168,9 @@ def main(argv: list[str] | None = None) -> int:
               f"({workspace}). Tests must write only into temporary "
               f"directories.", file=sys.stderr)
         print("\n".join(changes), file=sys.stderr)
-        print("\nNote: Export/, Reviews/ and _Ignore/ are git-ignored, so "
-              "`git status` will not show writes there.", file=sys.stderr)
+        print("\nNote: _Export/, _Reviews/, _Sheets/ and _Ignore/ are "
+              "git-ignored, so `git status` will not show writes there.",
+              file=sys.stderr)
         return 1
 
     return 0 if result.wasSuccessful() else 1

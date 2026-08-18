@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-deploy_export.py — render Export/ and deploy it to the wiki over JSON-RPC.
+deploy_export.py — render _Export/ and deploy it to the wiki over JSON-RPC.
 
-Direction: Export/ -> staging tree -> wiki. This script never writes to the
+Direction: _Export/ -> staging tree -> wiki. This script never writes to the
 workspace itself; the wiki is read to plan on every run except --render-only,
 and written only with --go.
 
@@ -241,7 +241,7 @@ def render_tree(export_dir: Path, staging: Path, base: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bunnyforge deploy-export",
-        description="Render Export/ and deploy it to the wiki over "
+        description="Render _Export/ and deploy it to the wiki over "
                     "JSON-RPC. The default run is a dry run: it renders, "
                     "fetches the wiki's current state, and prints the full "
                     "plan, writing nothing to the wiki.")
@@ -266,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
                              "--go)")
     parser.add_argument("--export-dir", default=None,
                         help="Source directory (default: the resolved "
-                             "workspace's Export/, so it follows --workspace)")
+                             "workspace's _Export/, so it follows --workspace)")
     parser.add_argument("--create-empty-placeholders", action="store_true",
                         help="Write a zero-byte page for links to workspace files "
                              "that were not exported, so the link resolves. The "
@@ -296,9 +296,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Resolved here rather than as an argparse default: a default is computed
     # when the parser is built, before --workspace has been read, so it could
-    # only ever name the install repo's Export/.
+    # only ever name the install repo's _Export/.
     export_dir = (Path(args.export_dir).expanduser().resolve()
-                  if args.export_dir else ws.root / "Export")
+                  if args.export_dir else ws.root / "_Export")
     if not export_dir.is_dir():
         print(f"error: {export_dir} not found — run export_player.py first",
               file=sys.stderr)
