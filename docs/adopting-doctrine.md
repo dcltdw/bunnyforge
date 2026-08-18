@@ -70,19 +70,35 @@ the old names: an excluded `_Archive/`, and generated output written to
 bare `Sheets/`, `Reviews/`, `Export/`. Five steps, once, from the
 workspace root:
 
-1. **Make the archive canon.** `git mv _Archive Archive`, then restructure
-   its contents to mirror sections (`Archive/NPCs/...`) where they do not
-   already — an archived file outside any mirrored section is still walked
-   and validated, just not held to the compendium-index obligation its
-   section would apply. If you would rather keep a different top-level
-   name, set `workspace.archive_dir` in `campaign.toml` instead of
-   renaming to `Archive`; it can be anything except a `_`- or
-   `.`-prefixed name, which the loader refuses outright, because that
-   would exclude the archive from every walk.
+1. **Make the archive canon — the rename is mandatory.** If `_Archive/`
+   exists: `git mv _Archive Archive`, then restructure its contents to
+   mirror sections (`Archive/NPCs/...`) where they do not already — an
+   archived file outside any mirrored section is still walked and
+   validated, just not held to the compendium-index obligation its
+   section would apply. The directory must lose its `_` prefix one way or
+   another: `is_machinery` treats *any* `_`-prefixed name as never-walked,
+   whatever `campaign.toml` says, so adding a config key without renaming
+   the directory migrates nothing — the walk reads `config.archive_dir`
+   off disk, finds no such directory (it's still sitting at `_Archive/`),
+   and returns silently, so step 5's `review checkup` would show nothing
+   new and the archive would still be invisible, with no error to say so.
+   If you would rather use a name other than `Archive`, set
+   `workspace.archive_dir` in `campaign.toml` to that name **and** rename
+   the directory to match, e.g. `git mv _Archive Chronicle` alongside
+   `archive_dir = "Chronicle"` — any name works except one starting with
+   `_` or `.`, which the loader refuses outright for exactly the reason
+   above.
 
-2. **Mark the generated output.** For each of `Sheets`, `Reviews`, `Export`
-   that exists: `git mv Sheets _Sheets` (and likewise) — or simply delete
-   them; all three are rebuilt by the tools.
+2. **Clear the generated output.** `Sheets/`, `Reviews/`, and `Export/`
+   have been gitignored since the first packaged `.gitignore` (and
+   `Export/` is disposable even if yours predates that), so on a typical
+   workspace none of them are tracked, and `git mv Sheets _Sheets` fails
+   on an untracked directory with "source directory is empty". The
+   simple, always-working move: for each that exists, `rm -rf Sheets`
+   (and likewise for `Reviews`, `Export`) — all three are rebuilt by the
+   tools on demand, so nothing is lost. Only if yours is one of the rare
+   workspaces where the directory is actually tracked does `git mv Sheets
+   _Sheets` work as written, preserving its history in one step.
 
 3. **Update `campaign.toml`** if it sets these keys explicitly:
    `sheets_dir` becomes `"_Sheets"`, and `exclude_dirs` drops `_Ignore`,
@@ -100,7 +116,9 @@ workspace root:
    (`_Sheets/`, `_Reviews/`, `_Export/`) into yours — add them alongside
    whatever your workspace already ignores, rather than overwriting the
    file, since unlike `AGENTS.md` your `.gitignore` is not package-owned
-   and may carry entries of your own.
+   and may carry entries of your own. While you are in there, remove any
+   old unprefixed `Sheets/`/`Reviews/` lines — dead patterns once step 2
+   has run.
 
 5. **Run `bunnyforge review checkup`.** Newly walked archive files may
    produce front-matter findings, or `name-collisions` errors against
