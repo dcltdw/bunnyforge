@@ -242,7 +242,12 @@ class WorkspaceStore:
             raise StoreError(
                 f"bad {label} name {raw!r} — letters, digits, spaces, "
                 "- _ ' only, starting with a letter or digit")
-        return _slug(raw)
+        slug = _slug(raw)
+        if not slug:
+            raise StoreError(
+                f"{label} name {raw!r} slugs to empty — use a name with "
+                "at least one letter or digit that survives lowercasing")
+        return slug
 
     def _draft_path(self, path: str) -> Path:
         root = self.ws.root
@@ -328,7 +333,24 @@ class WorkspaceStore:
                 f"no such content file: {path} — propose_revision proposes "
                 "changes to an existing file; use save_draft for new "
                 "content")
-        dest = self._drafts() / target.relative_to(self.ws.root)
+        inner = target.relative_to(self.ws.root)
+        if any(part.startswith("_") for part in inner.parts):
+            # _canonical only refuses configured exclude_dirs, so a
+            # _-prefixed component that isn't one of those (NPCs/_notes.md,
+            # anything under Briefs/_scratch/) still resolves here. Mirroring
+            # it would land the shadow in the drafts directory's own
+            # machinery area, which list_drafts/read_draft/update_draft/
+            # promote_draft all refuse to touch — an invisible, permanent
+            # lockout, since the existence check below would then refuse
+            # every future proposal for this file too. Refuse up front
+            # instead, before anything is written.
+            raise StoreError(
+                f"{path} is under a _-prefixed directory — its draft would "
+                f"land in {self.ws.config.drafts_dir}/'s machinery area, "
+                "which is never listed or read, so the proposal could "
+                "never be reviewed or promoted; move or rename the file "
+                "out of the _-prefixed directory if you want it revisable")
+        dest = self._drafts() / inner
         rel = dest.relative_to(self.ws.root).as_posix()
         if dest.exists():
             raise StoreError(
@@ -432,9 +454,19 @@ class WorkspaceStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
         p.unlink()
+        # Only rewrite the manifest when there is something to write: a
+        # genuine prune (removing this entry, or dropping other stale
+        # entries) when the file already exists, or removing this entry
+        # when it was actually present. A NEW draft in a workspace with no
+        # prior proposals has no manifest and no entry — rewriting then
+        # would *create* .proposal-bases.json containing "{}", a file that
+        # never existed, and the pathspec logic below would add it to a
+        # commit whose own contract is "exactly what promotion touched".
         bases = self._load_bases()
+        had_entry = rel in bases
         bases.pop(rel, None)
-        self._save_bases(bases)
+        if had_entry or self._bases_file().is_file():
+            self._save_bases(bases)
         # Add exactly what promotion touched to the index: the target,
         # plus the removed draft and the manifest when git can see them
         # (a never-tracked deleted path would fail `git add` as an

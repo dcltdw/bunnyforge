@@ -1,9 +1,11 @@
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bunnyforge import _config, _store
 
@@ -315,6 +317,26 @@ class TestSaveDraft(StoreCase):
         rel = _store.WorkspaceStore(ws).save_draft("NPCs", "Cho", "x")
         self.assertEqual(rel, "_Outbox/NPCs/cho.md")
 
+    def test_slugged_refuses_an_empty_slug(self):
+        # _DRAFT_NAME_RE's required leading alphanumeric is the only thing
+        # that currently makes an empty slug impossible — nothing in _slug
+        # or _slugged itself states or guards that invariant. Relax the
+        # regex later (say, to admit non-ASCII names) and this would
+        # silently start writing files named plain ".md". _slugged must
+        # guard the invariant itself, not rely on the regex accidentally
+        # holding it up.
+        #
+        # No input can both pass today's _DRAFT_NAME_RE and slug to empty
+        # (the leading alnum char always survives _slug's substitutions),
+        # so this test relaxes the regex the way a future change might, to
+        # reach the guard through the real _slugged code path rather than
+        # reimplementing its logic.
+        store = _store.WorkspaceStore(self.make_ws())
+        with mock.patch.object(_store, "_DRAFT_NAME_RE", re.compile(r".*")):
+            with self.assertRaises(_store.StoreError) as ctx:
+                store._slugged("___", "draft")
+        self.assertIn("draft", str(ctx.exception))
+
 
 class TestProposeRevision(StoreCase):
     def test_shadow_mirrors_the_canonical_path_and_records_a_base(self):
@@ -355,6 +377,21 @@ class TestProposeRevision(StoreCase):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError):
             store.propose_revision("../outside.md", "x")
+
+    def test_refuses_a_target_with_an_underscore_component(self):
+        # A canonical file like NPCs/_notes.md (or anything under a
+        # _-prefixed directory that isn't a configured exclude_dir) would
+        # otherwise mirror into the drafts machinery area — invisible to
+        # list_drafts/read_draft/update_draft/promote_draft forever, yet
+        # still occupying the "pending proposal already exists" slot for
+        # every future attempt. Must be refused up front instead.
+        ws = self.make_ws()
+        (ws.root / "NPCs" / "_notes.md").write_text("secret", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.propose_revision("NPCs/_notes.md", "x")
+        self.assertIn("NPCs/_notes.md", str(ctx.exception))
+        self.assertFalse((ws.root / "_AgentDrafts").exists())
 
 
 class TestDraftReads(StoreCase):
@@ -766,3 +803,18 @@ class TestPromoteDraft(StoreCase):
         with self.assertRaises(_store.StoreError) as ctx:
             store.promote_draft("_AgentDrafts/Ideas/nothing.md")
         self.assertIn("list_drafts", str(ctx.exception))
+
+    def test_promoting_a_new_draft_never_creates_a_manifest(self):
+        # In a workspace where no revision was ever proposed, _load_bases()
+        # returns {}, the pop is a no-op, and an unconditional _save_bases
+        # would still *create* .proposal-bases.json containing "{}" — a
+        # file that never existed before, committed into a promotion whose
+        # own comment says it adds "exactly what promotion touched".
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.save_draft("Ideas", "Harbor Heist",
+                               "---\ntitle: Harbor Heist\n---\nplot\n")
+        store.promote_draft(rel)
+        self.assertFalse(
+            (ws.root / "_AgentDrafts" / ".proposal-bases.json").exists())
+        self.assertEqual(self._git(ws, "status", "--porcelain").strip(), "")

@@ -119,6 +119,9 @@ returns one in full. They exist so the agent picks up its own earlier
 work and merges rather than re-writing; a `_`-prefixed subdirectory
 (say, `_AgentDrafts/_Rejected/`, if you use rejection-by-moving) is
 never listed or read, so rejected material stays rejected.
+`campaign_overview`'s `drafts_pending` count is the discovery hook for
+this — it tells the agent there is earlier work worth resuming before it
+calls `list_drafts()`.
 
 **The inbound queue — read only when you ask:** `_ExtractInbound/`
 (`inbound_dir`, also always excluded from the canon read tools regardless
