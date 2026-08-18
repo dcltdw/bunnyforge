@@ -216,6 +216,11 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         uris = {str(r.uri) for r in await server.list_resources()}
         self.assertNotIn("bunnyforge://doctrine/situation-design.md", uris)
+        # docs/serve-mcp.md promises that "a workspace that predates it
+        # [campaign-doctrine.md] simply serves the other three" -- scaffold()
+        # does not create campaign-doctrine.md, so it must not be listed
+        # either, the same way an absent situation-design.md is not listed.
+        self.assertNotIn("bunnyforge://doctrine/campaign-doctrine.md", uris)
 
     async def test_campaign_doctrine_is_served_when_present(self):
         # The MCP agent follows no include directive: a "see also" inside

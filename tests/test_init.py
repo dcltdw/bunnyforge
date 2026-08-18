@@ -538,10 +538,15 @@ class TestGeneratedConfig(unittest.TestCase):
         # commented out. That is a second copy of _DEFAULTS, and the class's
         # docstring is right that a second copy is a second thing to drift --
         # so guard the one list this change touches rather than trusting it.
+        # Anchored to the commented `root_docs = [...]` block itself (a bare
+        # assertIn would match a quoted name anywhere in the file) and
+        # bidirectional, so a default missing from the block *and* a stale
+        # entry left behind after a default was removed both fail.
         template = init.packaged_bytes("campaign.toml.in").decode("utf-8")
-        for doc in _config._DEFAULTS["root_docs"]:
-            with self.subTest(doc=doc):
-                self.assertIn(f'"{doc}"', template)
+        match = re.search(r"# root_docs\b.*?\]", template, re.DOTALL)
+        self.assertIsNotNone(match, "no commented root_docs example found")
+        block_docs = set(re.findall(r'"([^"]+)"', match.group()))
+        self.assertEqual(block_docs, set(_config._DEFAULTS["root_docs"]))
 
 
 def _scrubbed_env(**extra: str) -> dict[str, str]:
