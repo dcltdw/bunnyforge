@@ -89,6 +89,29 @@ class TestOverview(StoreCase):
         self.assertEqual(ov["inbound_pending"], 2)  # pdf counted, _Done not
         self.assertEqual(ov["drafts_pending"], 1)
 
+    def test_archive_is_a_section_of_its_own(self):
+        # #62 fixed a latent contradiction: doctrine said "read the archive
+        # freely" while the MCP surface refused it entirely. Now it lists,
+        # reads, counts, and searches like any canon -- as its own section,
+        # so live counts stay uninflated.
+        ws = self.make_ws()
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        (arch / "old-hag.md").write_text(
+            "---\ntitle: The Old Hag\nsummary: Retired rival of the ferry.\n"
+            "visibility: gm-only\nstatus: retired\n---\ngone but recorded\n",
+            encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        ov = store.overview()
+        self.assertEqual(ov["sections"]["NPCs"], 1)
+        self.assertEqual(ov["sections"]["Archive"], 1)
+        [row] = store.list_entities("Archive")
+        self.assertEqual(row["path"], "Archive/NPCs/old-hag.md")
+        self.assertEqual(row["title"], "The Old Hag")
+        self.assertIn("recorded", store.read_entity("Archive/NPCs/old-hag.md"))
+        hits = store.search("recorded", section="Archive")
+        self.assertEqual(hits[0]["path"], "Archive/NPCs/old-hag.md")
+
 
 class TestListEntities(StoreCase):
 
@@ -336,6 +359,14 @@ class TestSaveDraft(StoreCase):
             with self.assertRaises(_store.StoreError) as ctx:
                 store._slugged("___", "draft")
         self.assertIn("draft", str(ctx.exception))
+
+    def test_archive_is_not_a_draftable_section(self):
+        # New material never lands retired; archiving is a GM act. The
+        # perceptions record has the same one-way property.
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.save_draft("Archive", "Old Thing", "x")
+        self.assertIn("Archive", str(ctx.exception))
 
 
 class TestProposeRevision(StoreCase):

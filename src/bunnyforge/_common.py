@@ -144,6 +144,27 @@ def iter_content_files(ws: Workspace) -> list[FileRec]:
                 fm, body = split_front_matter(p.read_text(encoding="utf-8"))
                 recs.append(FileRec(p, fm, body, category))
 
+    # The archive walks as canon (#62): mirrored top-level layout,
+    # Archive/<Section>/<file>.md. Category follows the mirror so archived
+    # briefs stay brief-shaped to every check; unknown mirrors and files
+    # directly at the archive root default to "entity" -- visible and
+    # validated rather than silently skipped.
+    inherit_names = set(config.inherit_dirs)
+    base = workspace / config.archive_dir
+    if base.is_dir():
+        for p in base.rglob("*.md"):
+            if p.name.lower() == "readme.md":
+                continue
+            parts = p.relative_to(workspace).parts
+            if config.exclude_dirs & set(parts):
+                continue
+            if any(is_machinery(part) for part in parts):
+                continue
+            mirror = parts[1] if len(parts) > 2 else None
+            category = "inherit" if mirror in inherit_names else "entity"
+            fm, body = split_front_matter(p.read_text(encoding="utf-8"))
+            recs.append(FileRec(p, fm, body, category))
+
     return sorted(recs, key=lambda r: r.path.as_posix())
 
 
@@ -225,7 +246,9 @@ def content_dir_names(config: Config) -> frozenset[str]:
     and the wiki exporter share one notion of "names a content directory"
     and cannot drift (#8, #17).
     """
-    return frozenset(d.lower() for d in config.entity_dirs + config.inherit_dirs)
+    return frozenset(d.lower() for d in
+                     config.entity_dirs + config.inherit_dirs
+                     + (config.archive_dir,))
 
 
 def is_pass_through_target(target: str, content_dirs: frozenset[str]) -> bool:

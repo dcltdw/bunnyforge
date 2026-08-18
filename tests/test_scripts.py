@@ -75,11 +75,13 @@ class TestCommon(unittest.TestCase):
             "gm-only")
 
     def test_content_dir_names_unions_entity_and_inherit_lowercased(self):
+        # #62: the archive is canon too, so its (default) name joins the
+        # union alongside every configured entity/inherit dir.
         cfg = _config.load(self._ws_with(
             '[campaign]\nnamespace = "t"\n\n[workspace]\n'
             'entity_dirs = ["NPCs", "Setting"]\ninherit_dirs = ["Briefs"]\n'))
         self.assertEqual(_common.content_dir_names(cfg),
-                         frozenset({"npcs", "setting", "briefs"}))
+                         frozenset({"npcs", "setting", "briefs", "archive"}))
 
     def test_content_dir_names_follows_config_not_defaults(self):
         # A campaign that renames its directories must get ITS names, which a
@@ -88,7 +90,7 @@ class TestCommon(unittest.TestCase):
             '[campaign]\nnamespace = "t"\n\n[workspace]\n'
             'entity_dirs = ["Dramatis"]\ninherit_dirs = ["Preps"]\n'))
         self.assertEqual(_common.content_dir_names(cfg),
-                         frozenset({"dramatis", "preps"}))
+                         frozenset({"dramatis", "preps", "archive"}))
         self.assertNotIn("npcs", _common.content_dir_names(cfg))
 
 

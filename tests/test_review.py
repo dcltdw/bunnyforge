@@ -143,6 +143,41 @@ class TestEnumerator(unittest.TestCase):
             self.assertEqual(rec.fm["visibility"], "player-visible")
             self.assertIn("text", rec.body)
 
+    def test_archive_is_walked_as_canon_with_mirrored_categories(self):
+        # #62: Archive/ is the record of what happened -- ordinary canon,
+        # mirrored layout. Category follows the mirrored section; unknown
+        # mirrors and root-level strays default to entity so they stay
+        # visible to the front-matter check (fail loud, never a silent hole).
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "Archive/NPCs/old-hag.md":
+                    "---\ntype: npc\nvisibility: gm-only\nstatus: retired\n---\nx",
+                "Archive/Briefs/session-001/old-brief.md": "---\ntype: brief\n---\nx",
+                "Archive/stray.md": "---\ntype: npc\n---\nx",
+                "Archive/_Done/never.md": "machinery inside canon stays out",
+                "Archive/README.md": "# readme",
+            })
+            ws = _config.open_workspace(root)
+            by_path = {r.path.relative_to(ws.root).as_posix(): r
+                       for r in review._common.iter_content_files(ws)}
+            self.assertEqual(by_path["Archive/NPCs/old-hag.md"].category, "entity")
+            self.assertEqual(
+                by_path["Archive/Briefs/session-001/old-brief.md"].category,
+                "inherit")
+            self.assertEqual(by_path["Archive/stray.md"].category, "entity")
+            self.assertNotIn("Archive/_Done/never.md", by_path)
+            self.assertNotIn("Archive/README.md", by_path)
+
+    def test_archive_is_a_content_dir_name(self):
+        # A bare [[Archive]] link is a directory link, like [[Mechanics]] --
+        # content_dir_names feeds both the wikilink check and the exporter.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {})
+            ws = _config.open_workspace(root)
+            self.assertIn("archive",
+                          review._common.content_dir_names(ws.config))
+
 
 class TestIsMachinery(unittest.TestCase):
     def test_prefixes(self):

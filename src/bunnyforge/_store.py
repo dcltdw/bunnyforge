@@ -69,7 +69,7 @@ class WorkspaceStore:
 
     def _sections(self) -> tuple[str, ...]:
         cfg = self.ws.config
-        return cfg.entity_dirs + cfg.inherit_dirs
+        return cfg.entity_dirs + cfg.inherit_dirs + (cfg.archive_dir,)
 
     def _check_section(self, section: str) -> None:
         if section not in self._sections():
@@ -233,9 +233,11 @@ class WorkspaceStore:
         return self.ws.root / self.ws.config.drafts_dir
 
     def _draftable_sections(self) -> tuple[str, ...]:
-        # The perception record is by contract never agent-authored.
+        # The perception record is by contract never agent-authored, and
+        # new material never lands retired: archiving is a GM act.
+        cfg = self.ws.config
         return tuple(s for s in self._sections()
-                     if s != self.ws.config.perceptions_dir)
+                     if s not in (cfg.perceptions_dir, cfg.archive_dir))
 
     def _slugged(self, raw: str, label: str) -> str:
         if not _DRAFT_NAME_RE.fullmatch(raw):
