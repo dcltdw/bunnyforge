@@ -31,9 +31,13 @@ cultures = "names/cultures"        # a DIRECTORY of one-file-per-culture
 # root_docs       = ["AGENTS.md", "compendium.md", "front-burner.md",
 #                    "open-questions.md", "out-of-game.md", "situation-design.md",
 #                    "style-guide.md", "tickets.md"]
-# exclude_dirs    = ["_Ignore", "_Archive", "_ExtractInbound", "_Templates",
+# exclude_dirs    = ["_Ignore", "_Archive", "_Templates",
 #                    "Sheets", "Reviews", "docs", "scripts", "tests"]
 # briefs_dir      = "Briefs"
 # sheets_dir      = "Sheets"
 # perceptions_dir = "Perceptions"
+# inbound_dir     = "_ExtractInbound"  # the GM's inbound queue; always
+#                                      # excluded from canon, listed or not
+# drafts_dir      = "_AgentDrafts"     # agent output awaiting review; always
+#                                      # excluded from canon, listed or not
 # type_dirs       = { npc = "NPCs", faction = "Factions", place = "Setting" }

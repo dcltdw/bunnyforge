@@ -35,8 +35,8 @@ Config = namedtuple(
     "Config",
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
-    "briefs_dir sheets_dir perceptions_dir type_dirs staging_dir wiki_url "
-    "wiki_install_root accepted snapshot_max_age_days fetch_command",
+    "briefs_dir sheets_dir perceptions_dir type_dirs inbound_dir drafts_dir "
+    "wiki_url wiki_install_root accepted snapshot_max_age_days fetch_command",
     # wiki_url and wiki_install_root: [wiki] is entirely optional, so a
     # workspace using neither RPC nor the `wiki` review suite leaves both
     # None. accepted: [[review.accepted]] is likewise optional, so a
@@ -116,12 +116,15 @@ _DEFAULTS = {
     "root_docs": ["AGENTS.md", "compendium.md", "front-burner.md",
                   "open-questions.md", "out-of-game.md", "situation-design.md",
                   "style-guide.md", "tickets.md"],
-    "exclude_dirs": ["_Ignore", "_Archive", "_ExtractInbound", "_Templates",
+    "exclude_dirs": ["_Ignore", "_Archive", "_Templates",
                      "Sheets", "Reviews", "docs", "scripts", "tests"],
-    # Where material authored outside the workspace lands to await
-    # extraction. Deliberately one of exclude_dirs above: a staged draft is
-    # not content until a human promotes it, so nothing walks it.
-    "staging_dir": "_ExtractInbound",
+    # The GM's inbound queue (material authored elsewhere, awaiting
+    # extraction) and the agents' drafts directory (output awaiting GM
+    # review). Both are appended to exclude_dirs at load time, so neither
+    # appears in the default list above — a second copy would be a second
+    # thing to drift, and no configuration may un-exclude them.
+    "inbound_dir": "_ExtractInbound",
+    "drafts_dir": "_AgentDrafts",
     "briefs_dir": "Briefs",
     "sheets_dir": "Sheets",
     "perceptions_dir": "Perceptions",
@@ -316,6 +319,26 @@ def load(workspace: Path) -> Config:
             "not overlap — each would be walked twice; offending "
             f"director{'ies' if len(both) > 1 else 'y'}: {', '.join(both)}")
 
+    if "staging_dir" in ws:
+        raise ConfigError(
+            f"{path}: workspace.staging_dir was renamed — use inbound_dir "
+            "for the GM's inbound queue. Agent drafts now live separately "
+            "under drafts_dir (default _AgentDrafts).")
+
+    inbound_dir = _str(ws, "inbound_dir")
+    drafts_dir = _str(ws, "drafts_dir")
+    if inbound_dir == drafts_dir:
+        raise ConfigError(
+            f"{path}: workspace.inbound_dir and workspace.drafts_dir are "
+            f"both {inbound_dir!r} — they must name different directories; "
+            "one is the GM's inbound queue, the other the agents' drafts")
+    for key, val in (("inbound_dir", inbound_dir), ("drafts_dir", drafts_dir)):
+        if val in entity_dirs or val in inherit_dirs:
+            raise ConfigError(
+                f"{path}: workspace.{key} = {val!r} names a content section "
+                "— it would be excluded from every walk; pick a directory "
+                "of its own (convention: a _-prefixed name)")
+
     return Config(
         name=campaign.get("name", namespace),
         namespace=namespace,
@@ -323,7 +346,8 @@ def load(workspace: Path) -> Config:
         inherit_dirs=inherit_dirs,
         compendium_dirs=_str_tuple(ws, "compendium_dirs"),
         root_docs=_str_tuple(ws, "root_docs"),
-        exclude_dirs=frozenset(_str_tuple(ws, "exclude_dirs")) | MANDATORY_EXCLUDES,
+        exclude_dirs=(frozenset(_str_tuple(ws, "exclude_dirs"))
+                      | MANDATORY_EXCLUDES | {inbound_dir, drafts_dir}),
         names_cultures=names.get("cultures"),
         names_official_culture=names.get("official_culture"),
         names_spelling=spelling,
@@ -331,7 +355,8 @@ def load(workspace: Path) -> Config:
         sheets_dir=_str(ws, "sheets_dir"),
         perceptions_dir=_str(ws, "perceptions_dir"),
         type_dirs=_type_dirs(ws),
-        staging_dir=_str(ws, "staging_dir"),
+        inbound_dir=inbound_dir,
+        drafts_dir=drafts_dir,
         wiki_url=wiki_url,
         wiki_install_root=wiki_install_root,
         accepted=accepted,

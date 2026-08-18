@@ -256,7 +256,7 @@ class TestStageDraft(StoreCase):
                 store.stage_draft("NPCs", bad, "x")
 
     def test_honors_configured_staging_dir(self):
-        ws = self.make_ws('\n[workspace]\nstaging_dir = "_Inbox"\n')
+        ws = self.make_ws('\n[workspace]\ninbound_dir = "_Inbox"\n')
         rel = _store.WorkspaceStore(ws).stage_draft("NPCs", "Cho", "x")
         self.assertEqual(rel, "_Inbox/NPCs/Cho.md")
 
@@ -321,7 +321,7 @@ class TestStagingReads(StoreCase):
                          ["_ExtractInbound/NPCs/Cho.md"])
 
     def test_listing_honors_a_configured_staging_dir(self):
-        ws = self.make_ws('\n[workspace]\nstaging_dir = "_Inbox"\n')
+        ws = self.make_ws('\n[workspace]\ninbound_dir = "_Inbox"\n')
         store = _store.WorkspaceStore(ws)
         store.stage_draft("NPCs", "Cho", "x")
         self.assertEqual([e["path"] for e in store.list_staging()],

@@ -204,7 +204,7 @@ class WorkspaceStore:
     # -- staging ------------------------------------------------------------
 
     def _staging(self) -> Path:
-        return self.ws.root / self.ws.config.staging_dir
+        return self.ws.root / self.ws.config.inbound_dir
 
     # Reading staging back is the agent's own inbox, not a second door into
     # canon: these two are the only way in, they reach nothing else, and the
@@ -241,7 +241,7 @@ class WorkspaceStore:
         if not p.is_relative_to(staging):
             raise StoreError(
                 f"not a staged path: {path} — read_staged serves "
-                f"{self.ws.config.staging_dir}/ only; canonical files are "
+                f"{self.ws.config.inbound_dir}/ only; canonical files are "
                 "read with read_entity")
         if p.suffix != ".md":
             raise StoreError(
