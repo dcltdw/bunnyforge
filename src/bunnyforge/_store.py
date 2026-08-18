@@ -77,19 +77,27 @@ class WorkspaceStore:
                              + ", ".join(self._sections()))
 
     def _canonical(self, path: str) -> Path:
-        """Resolve a workspace-relative path, refusing escapes and excluded
-        directories.
+        """Resolve a workspace-relative path, refusing what is not canon.
 
-        The drafts and inbound directories are among the excluded ones, so
-        neither is readable through this method: the canon read tools serve
-        canon. Each has its own labelled door — read_draft and read_inbound
-        — guarding the inverse condition.
+        Two refusals, one meaning (#62): a _- or .-prefixed component is
+        not canon by the naming convention — which is also what keeps the
+        drafts and inbound directories out; each of those has its own
+        labelled door (read_draft, read_inbound) guarding the inverse
+        condition. An exclude_dirs component is repo infrastructure the
+        config enumerates (docs/, scripts/, tests/).
         """
         root = self.ws.root
         p = (root / path).resolve()
         if not p.is_relative_to(root):
             raise StoreError(f"path escapes the workspace: {path}")
-        excluded = self.ws.config.exclude_dirs & set(p.relative_to(root).parts)
+        parts = p.relative_to(root).parts
+        if any(_common.is_machinery(part) for part in parts):
+            raise StoreError(
+                f"{path} has a _- or .-prefixed component, so it is not "
+                "canon (the workspace naming convention); the canon tools "
+                "serve canon only — drafts are read with read_draft, the "
+                "inbound queue with read_inbound")
+        excluded = self.ws.config.exclude_dirs & set(parts)
         if excluded:
             raise StoreError(
                 f"path is in an excluded directory ({', '.join(sorted(excluded))}): "
@@ -262,11 +270,12 @@ class WorkspaceStore:
                 f"not a draft path: {path} — this tool serves "
                 f"{self.ws.config.drafts_dir}/ only; canonical files are "
                 "read with read_entity")
-        if any(part.startswith("_")
+        if any(_common.is_machinery(part)
                for part in p.relative_to(drafts).parts):
             raise StoreError(
-                f"{path} is in a _-prefixed area of the drafts directory "
-                "(the GM's machinery, e.g. _Rejected/) and is never served")
+                f"{path} is in a _- or .-prefixed area of the drafts "
+                "directory (the GM's machinery, e.g. _Rejected/, or hidden "
+                "files) and is never served")
         if p.suffix != ".md":
             raise StoreError(
                 f"not a draft markdown file: {path} — drafts are .md only")
@@ -336,22 +345,6 @@ class WorkspaceStore:
                 "changes to an existing file; use save_draft for new "
                 "content")
         inner = target.relative_to(self.ws.root)
-        if any(part.startswith("_") for part in inner.parts):
-            # _canonical only refuses configured exclude_dirs, so a
-            # _-prefixed component that isn't one of those (NPCs/_notes.md,
-            # anything under Briefs/_scratch/) still resolves here. Mirroring
-            # it would land the shadow in the drafts directory's own
-            # machinery area, which list_drafts/read_draft/update_draft/
-            # promote_draft all refuse to touch — an invisible, permanent
-            # lockout, since the existence check below would then refuse
-            # every future proposal for this file too. Refuse up front
-            # instead, before anything is written.
-            raise StoreError(
-                f"{path} is under a _-prefixed directory — its draft would "
-                f"land in {self.ws.config.drafts_dir}/'s machinery area, "
-                "which is never listed or read, so the proposal could "
-                "never be reviewed or promoted; move or rename the file "
-                "out of the _-prefixed directory if you want it revisable")
         dest = self._drafts() / inner
         rel = dest.relative_to(self.ws.root).as_posix()
         if dest.exists():
@@ -391,7 +384,7 @@ class WorkspaceStore:
             if not p.is_file():
                 continue
             inner = p.relative_to(drafts)
-            if any(part.startswith("_") for part in inner.parts):
+            if any(_common.is_machinery(part) for part in inner.parts):
                 continue
             rel = p.relative_to(self.ws.root).as_posix()
             fm, _body = _common.split_front_matter(
@@ -501,18 +494,11 @@ class WorkspaceStore:
     # descriptions add "only when the GM asks". _inbound_path is the shared
     # resolver a future mark_extracted() reuses — a move tool is one new
     # method, not a rewrite (its _Done/ destination would be constructed
-    # internally, not through this reader's resolver, which refuses
-    # _-prefixed components).
+    # internally, not through this reader's resolver, which refuses _- and
+    # .-prefixed components).
 
     def _inbound(self) -> Path:
         return self.ws.root / self.ws.config.inbound_dir
-
-    @staticmethod
-    def _machinery(parts: tuple[str, ...]) -> bool:
-        # _-prefixed: the workspace's machinery convention (_Done/,
-        # _Rejected/). .-prefixed: hidden files (.DS_Store) — never GM
-        # material, and listing them would inflate inbound_pending.
-        return any(part.startswith(("_", ".")) for part in parts)
 
     def _inbound_path(self, path: str) -> Path:
         root = self.ws.root
@@ -525,7 +511,8 @@ class WorkspaceStore:
                 f"not an inbound path: {path} — read_inbound serves "
                 f"{self.ws.config.inbound_dir}/ only; canonical files are "
                 "read with read_entity")
-        if self._machinery(p.relative_to(inbound).parts):
+        if any(_common.is_machinery(part)
+               for part in p.relative_to(inbound).parts):
             raise StoreError(
                 f"{path} is in a processed or private area of the inbound "
                 "queue (_- or .-prefixed) and is never read — _Done/ holds "
@@ -543,7 +530,8 @@ class WorkspaceStore:
         for p in sorted(inbound.rglob("*")):
             if not p.is_file():
                 continue
-            if self._machinery(p.relative_to(inbound).parts):
+            if any(_common.is_machinery(part)
+                   for part in p.relative_to(inbound).parts):
                 continue
             out.append({
                 "path": p.relative_to(self.ws.root).as_posix(),

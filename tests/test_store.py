@@ -175,6 +175,17 @@ class TestReadEntity(StoreCase):
         with self.assertRaises(_store.StoreError):
             store.read_entity("NPCs/nobody.md")
 
+    def test_machinery_paths_are_refused_as_not_canon(self):
+        # #62: _-prefixed means not canon, and the canon tools serve canon.
+        # This is the general rule that absorbed PR #61's propose_revision
+        # guard -- refusal now happens at _canonical, one door for all.
+        ws = self.make_ws()
+        (ws.root / "NPCs" / "_notes.md").write_text("x", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.read_entity("NPCs/_notes.md")
+        self.assertIn("not canon", str(ctx.exception))
+
 
 class TestSearch(StoreCase):
 
@@ -410,12 +421,10 @@ class TestProposeRevision(StoreCase):
             store.propose_revision("../outside.md", "x")
 
     def test_refuses_a_target_with_an_underscore_component(self):
-        # A canonical file like NPCs/_notes.md (or anything under a
-        # _-prefixed directory that isn't a configured exclude_dir) would
-        # otherwise mirror into the drafts machinery area — invisible to
-        # list_drafts/read_draft/update_draft/promote_draft forever, yet
-        # still occupying the "pending proposal already exists" slot for
-        # every future attempt. Must be refused up front instead.
+        # The refusal moved from a bespoke guard into _canonical (#62):
+        # a machinery-named path is not canon, so there is nothing to
+        # propose against. The old lockout (a shadow stranded in the
+        # drafts machinery area) is structurally impossible now.
         ws = self.make_ws()
         (ws.root / "NPCs" / "_notes.md").write_text("secret", encoding="utf-8")
         store = _store.WorkspaceStore(ws)
@@ -423,6 +432,30 @@ class TestProposeRevision(StoreCase):
             store.propose_revision("NPCs/_notes.md", "x")
         self.assertIn("NPCs/_notes.md", str(ctx.exception))
         self.assertFalse((ws.root / "_AgentDrafts").exists())
+
+    def test_refuses_a_target_with_a_dot_component(self):
+        ws = self.make_ws()
+        hidden = ws.root / "NPCs" / ".hidden"
+        hidden.mkdir()
+        (hidden / "notes.md").write_text("secret", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.propose_revision("NPCs/.hidden/notes.md", "x")
+        self.assertIn("NPCs/.hidden/notes.md", str(ctx.exception))
+        self.assertFalse((ws.root / "_AgentDrafts").exists())
+
+    def test_archive_targets_are_ordinary_canon(self):
+        # Spec decision: no write carve-out. A revision to an archived file
+        # mirrors into the drafts tree like any canon target; the doctrine,
+        # not the tools, governs when editing history is appropriate.
+        ws = self.make_ws()
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        (arch / "old-hag.md").write_text(
+            "---\ntitle: Old Hag\n---\nx", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        rel = store.propose_revision("Archive/NPCs/old-hag.md", "y")
+        self.assertEqual(rel, "_AgentDrafts/Archive/NPCs/old-hag.md")
 
 
 class TestDraftReads(StoreCase):
@@ -494,6 +527,16 @@ class TestDraftReads(StoreCase):
         self.assertEqual([r["path"] for r in store.list_drafts()],
                          ["_AgentDrafts/NPCs/cho.md"])
 
+    def test_listing_skips_dot_components(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.save_draft("NPCs", "Cho", "x")
+        hidden = ws.root / "_AgentDrafts" / ".trash"
+        hidden.mkdir(parents=True)
+        (hidden / "old.md").write_text("x", encoding="utf-8")
+        self.assertEqual([r["path"] for r in store.list_drafts()],
+                         ["_AgentDrafts/NPCs/cho.md"])
+
     def test_nothing_drafted_is_an_empty_list_not_an_error(self):
         store = _store.WorkspaceStore(self.make_ws())
         self.assertEqual(store.list_drafts(), [])
@@ -524,6 +567,17 @@ class TestDraftReads(StoreCase):
         with self.assertRaises(_store.StoreError):
             _store.WorkspaceStore(ws).read_draft(
                 "_AgentDrafts/_Rejected/dead.md")
+
+    def test_a_dot_component_is_refused_like_an_underscore(self):
+        # The two families disagreed: inbound skipped .-prefixed
+        # components, drafts did not (#62). Unified: one predicate.
+        ws = self.make_ws()
+        hidden = ws.root / "_AgentDrafts" / ".obsidian"
+        hidden.mkdir(parents=True)
+        (hidden / "stray.md").write_text("x", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            _store.WorkspaceStore(ws).read_draft(
+                "_AgentDrafts/.obsidian/stray.md")
 
     def test_missing_draft_is_refused_pointing_at_the_listing(self):
         store = _store.WorkspaceStore(self.make_ws())
