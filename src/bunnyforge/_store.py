@@ -121,6 +121,10 @@ class WorkspaceStore:
                            ("open_questions", "open-questions.md")):
             p = self.ws.root / fname
             out[key] = p.read_text(encoding="utf-8") if p.is_file() else None
+        # Counts, not contents: the agent may notice the GM's queue is
+        # non-empty and offer to extract, without reading it unbidden.
+        out["inbound_pending"] = len(self.list_inbound())
+        out["drafts_pending"] = len(self.list_drafts())
         return out
 
     def list_entities(self, section: str) -> list[dict]:

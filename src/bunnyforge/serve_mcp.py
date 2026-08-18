@@ -88,8 +88,13 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     @server.tool()
     def campaign_overview() -> dict:
         """Get your bearings in one call: the campaign's name, each section
-        with how many entities it holds, and the current front-burner and
-        open-questions documents. Call this before anything else."""
+        with how many entities it holds, the current front-burner and
+        open-questions documents, and two counts — drafts_pending (your
+        own unpromoted drafts; list_drafts to resume them) and
+        inbound_pending (files in the GM's inbound queue). If
+        inbound_pending is non-zero you may mention it and offer to
+        extract; do not list or read the queue unless the GM asks. Call
+        this before anything else."""
         return store.overview()
 
     @server.tool()

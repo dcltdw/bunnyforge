@@ -68,6 +68,25 @@ class TestOverview(StoreCase):
         store = _store.WorkspaceStore(self.make_ws())
         self.assertNotIn("Factions", store.overview()["sections"])
 
+    def test_counts_pending_inbound_and_drafts(self):
+        # Defined as exactly len(list_inbound()) / len(list_drafts()), so
+        # a count and the listing it advertises cannot disagree. 0 when
+        # the directory is absent: a count is always present, and
+        # "nothing pending" is the true answer either way.
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        self.assertEqual(store.overview()["inbound_pending"], 0)
+        self.assertEqual(store.overview()["drafts_pending"], 0)
+        store.save_draft("NPCs", "Cho", "x")
+        q = ws.root / "_ExtractInbound"
+        (q / "_Done").mkdir(parents=True)
+        (q / "idea.txt").write_text("x", encoding="utf-8")
+        (q / "scan.pdf").write_bytes(b"%PDF")
+        (q / "_Done" / "spent.txt").write_text("x", encoding="utf-8")
+        ov = store.overview()
+        self.assertEqual(ov["inbound_pending"], 2)  # pdf counted, _Done not
+        self.assertEqual(ov["drafts_pending"], 1)
+
 
 class TestListEntities(StoreCase):
 
