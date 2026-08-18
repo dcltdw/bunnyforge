@@ -72,7 +72,7 @@ VALID_VISIBILITY = {"gm-only", "player-visible", "mixed"}
 
 def write_html(suite: str, findings: list[Finding], workspace: Path,
               accepted: list[AcceptedEntry] = ()) -> Path:
-    """Write Reviews/<suite>.html under `workspace` and return its path.
+    """Write _Reviews/<suite>.html under `workspace` and return its path.
 
     Takes the root rather than a whole Workspace, matching the convention the
     checks below follow: each takes exactly what it needs, and this needs no
@@ -134,7 +134,7 @@ def write_html(suite: str, findings: list[Finding], workspace: Path,
 </table>
 </body></html>
 """
-    out_dir = workspace / "Reviews"
+    out_dir = workspace / "_Reviews"
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{suite}.html"
     dest.write_text(doc, encoding="utf-8")
@@ -272,7 +272,13 @@ def check_compendium(files: list[FileRec], ws: Workspace) -> list[Finding]:
     for rec in files:
         if rec.category != "entity":
             continue
-        if rec.path.relative_to(workspace).parts[0] not in ws.config.compendium_dirs:
+        parts = rec.path.relative_to(workspace).parts
+        # An archived file answers to its mirrored section's compendium
+        # membership: retiring a file does not un-index it (#62).
+        section = parts[0]
+        if section == ws.config.archive_dir and len(parts) > 2:
+            section = parts[1]
+        if section not in ws.config.compendium_dirs:
             continue
         if rec.path not in indexed_paths:
             out.append(Finding("warn", "compendium", _rel(rec.path, workspace),
@@ -289,6 +295,34 @@ def check_reveal_when(files: list[FileRec], workspace: Path) -> list[Finding]:
         if reveal and normalize_visibility(rec.fm) != "gm-only":
             out.append(Finding("warn", "reveal-when", _rel(rec.path, workspace),
                                "reveal_when on a non-gm-only file (meaningless)"))
+    return out
+
+
+def check_name_collisions(files: list[FileRec], workspace: Path) -> list[Finding]:
+    """Every stem and alias among authority files must be unique (#62).
+
+    The wiki exporter refuses ambiguous links rather than guessing, and
+    with the archive walked, a retired file and its live replacement
+    would collide silently until deploy time. Authority means categories
+    "entity" and "root". Inherit files are exempt on purpose: the
+    doctrine REQUIRES a brief's stem to match its subject's writeup
+    (Briefs/session-014/mira-venn.md pairs with NPCs/mira-venn.md), the
+    perception record follows the same subject-naming pattern, and
+    inherit files are never exported — designed subordination, not
+    ambiguity of authority.
+    """
+    authority = [r for r in files if r.category in ("entity", "root")]
+    out: list[Finding] = []
+    for name, paths in sorted(target_index(authority).items()):
+        if len(paths) < 2:
+            continue
+        rels = sorted(_rel(p, workspace) for p in paths)
+        out.append(Finding(
+            "error", "name-collisions", rels[0],
+            f"[[{name}]] is ambiguous: " + ", ".join(rels) +
+            " — every stem and alias must name exactly one file; rename "
+            "one (retiring a file whose name its replacement reuses "
+            "means renaming at retire time)"))
     return out
 
 
@@ -491,6 +525,7 @@ CHECKS = {
     "wikilinks": check_wikilinks,
     "compendium": check_compendium,
     "reveal-when": check_reveal_when,
+    "name-collisions": check_name_collisions,
     "wiki-conf": check_wiki_conf,
     "wiki-acl": check_wiki_acl,
     "wiki-plugins": check_wiki_plugins,
@@ -500,7 +535,7 @@ CHECKS = {
 
 SUITES = {
     "checkup": ["visibility-audit", "front-matter", "wikilinks",
-                "compendium", "reveal-when"],
+                "compendium", "reveal-when", "name-collisions"],
     # Deliberately not part of checkup: it needs a live install, which CI does
     # not have. Keeping it a separate suite is the whole skippability
     # mechanism — checkup never reaches off the local machine.
@@ -685,7 +720,7 @@ def main(argv: list[str] | None = None, *, fetch_runner=None) -> int:
     parser.add_argument("suite", nargs="?", default="checkup",
                         help=f"Suite to run (default: checkup). Known: {', '.join(SUITES)}")
     parser.add_argument("--html", action="store_true",
-                        help="Also write an HTML report to Reviews/<suite>.html")
+                        help="Also write an HTML report to _Reviews/<suite>.html")
     parser.add_argument(
         "--workspace", metavar="PATH",
         help="Campaign workspace root (default: $BUNNYFORGE_WORKSPACE, else "

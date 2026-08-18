@@ -112,16 +112,46 @@ FileRec = namedtuple("FileRec", "path fm body category")
 #   config.exclude_dirs     never walked
 
 
+def _walk_md_files(workspace: Path, base: Path, config: Config,
+                   category_of) -> list[FileRec]:
+    """Walk `base` for `*.md` files under the one shared filter set --
+    README skip, excluded dirs, machinery components (#62) -- and return a
+    FileRec per surviving file, its category from `category_of(parts)`.
+
+    Both loops in iter_content_files funnel through this, so a future
+    change to any one filter cannot drift between the entity/inherit walk
+    and the archive walk the way #62's own problem statement warned about:
+    "enforced two different ways."
+    """
+    out: list[FileRec] = []
+    if not base.is_dir():
+        return out
+    for p in base.rglob("*.md"):
+        if p.name.lower() == "readme.md":
+            continue
+        parts = p.relative_to(workspace).parts
+        if config.exclude_dirs & set(parts):
+            continue
+        if any(is_machinery(part) for part in parts):
+            continue
+        fm, body = split_front_matter(p.read_text(encoding="utf-8"))
+        out.append(FileRec(p, fm, body, category_of(parts)))
+    return out
+
+
 def iter_content_files(ws: Workspace) -> list[FileRec]:
     """Enumerate content files as FileRec, sorted by path.
 
     Skips excluded directories and every README.md. Category is 'entity',
-    'inherit', or 'root'.
+    'inherit', or 'root'. Also walks config.archive_dir (#62), mirrored
+    top-level layout, with category following the mirrored section.
     """
     recs: list[FileRec] = []
     workspace, config = ws.root, ws.config
 
     for name in config.root_docs:
+        if any(is_machinery(part) for part in Path(name).parts):
+            continue
         p = workspace / name
         if p.is_file():
             fm, body = split_front_matter(p.read_text(encoding="utf-8"))
@@ -130,16 +160,23 @@ def iter_content_files(ws: Workspace) -> list[FileRec]:
     for category, dirs in (("entity", config.entity_dirs),
                            ("inherit", config.inherit_dirs)):
         for d in dirs:
-            base = workspace / d
-            if not base.is_dir():
-                continue
-            for p in base.rglob("*.md"):
-                if p.name.lower() == "readme.md":
-                    continue
-                if config.exclude_dirs & set(p.relative_to(workspace).parts):
-                    continue
-                fm, body = split_front_matter(p.read_text(encoding="utf-8"))
-                recs.append(FileRec(p, fm, body, category))
+            recs.extend(_walk_md_files(
+                workspace, workspace / d, config,
+                lambda parts, category=category: category))
+
+    # The archive walks as canon (#62): mirrored top-level layout,
+    # Archive/<Section>/<file>.md. Category follows the mirror so archived
+    # briefs stay brief-shaped to every check; unknown mirrors and files
+    # directly at the archive root default to "entity" -- visible and
+    # validated rather than silently skipped.
+    inherit_names = set(config.inherit_dirs)
+
+    def _archive_category(parts: tuple[str, ...]) -> str:
+        mirror = parts[1] if len(parts) > 2 else None
+        return "inherit" if mirror in inherit_names else "entity"
+
+    recs.extend(_walk_md_files(
+        workspace, workspace / config.archive_dir, config, _archive_category))
 
     return sorted(recs, key=lambda r: r.path.as_posix())
 
@@ -165,6 +202,21 @@ def split_aliases(raw: str) -> list[str]:
     else:
         parts = _ALIAS_ITEM_RE.split(raw)
     return [p.strip().strip("'\"") for p in parts if p.strip().strip("'\"")]
+
+
+def is_machinery(part: str) -> bool:
+    """True if one path component is machinery by naming convention (#62):
+    _-prefixed (not canon -- _Ignore/, _Templates/, _AgentDrafts/, _Done/)
+    or .-prefixed (hidden machine files -- .git, .DS_Store,
+    .proposal-bases.json).
+
+    One definition, honoured by iter_content_files, the store's canon
+    resolver and both agent-facing families, and review's checks, so no
+    two surfaces can disagree about what counts. _config.py's archive_dir
+    validation inlines the same one-line test: _common imports _config,
+    so importing this from there would be circular.
+    """
+    return part.startswith(("_", "."))
 
 
 def aliases_for(rec: FileRec) -> set[str]:
@@ -207,7 +259,9 @@ def content_dir_names(config: Config) -> frozenset[str]:
     and the wiki exporter share one notion of "names a content directory"
     and cannot drift (#8, #17).
     """
-    return frozenset(d.lower() for d in config.entity_dirs + config.inherit_dirs)
+    return frozenset(d.lower() for d in
+                     config.entity_dirs + config.inherit_dirs
+                     + (config.archive_dir,))
 
 
 def is_pass_through_target(target: str, content_dirs: frozenset[str]) -> bool:

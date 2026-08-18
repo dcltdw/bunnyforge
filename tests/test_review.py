@@ -82,6 +82,53 @@ class TestEnumerator(unittest.TestCase):
             self.assertIn("NPCs/mira-venn.md", by_path)
             self.assertNotIn("NPCs/_Archive/old.md", by_path)
 
+    def test_machinery_components_are_skipped_by_the_general_rule(self):
+        # #62: a leading _ means "not canon" wherever it appears. The rule
+        # itself keeps these out -- none of these names is in exclude_dirs.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "NPCs/_scratch/half-idea.md": "---\ntype: npc\n---\nx",
+                "NPCs/_notes.md": "not canon by name",
+                "NPCs/.hidden.md": "os droppings",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertEqual(rels, ["NPCs/mira-venn.md"])
+
+    def test_machinery_named_root_doc_is_not_walked(self):
+        # The root_docs loop used to bypass is_machinery entirely, so
+        # search() (which walks) and read_entity (which calls is_machinery
+        # directly) could disagree about a machinery-named root_docs entry.
+        # #62's whole thesis is that no two surfaces can disagree.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "campaign.toml": (
+                    '[campaign]\nnamespace = "t"\n\n[workspace]\n'
+                    'root_docs = ["_notes.md", "compendium.md"]\n'),
+                "_notes.md": "---\ntype: npc\n---\nsecret body",
+                "compendium.md": "# Compendium",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertNotIn("_notes.md", rels)
+            self.assertIn("compendium.md", rels)
+
+    def test_git_internals_are_never_walked(self):
+        # Previously guaranteed by MANDATORY_EXCLUDES; the .-prefix rule
+        # owns it now. Guarded here because Task 2 deletes that frozenset.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "NPCs/.git/lost.md": "---\ntype: npc\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertEqual(rels, ["NPCs/mira-venn.md"])
+
     def test_records_sorted_by_path_regardless_of_creation_order(self):
         # Creation order deliberately scrambled — root doc first, "z" before
         # "a" within the same entity dir — and root/entity/inherit all
@@ -114,6 +161,51 @@ class TestEnumerator(unittest.TestCase):
             rec = _common.iter_content_files(ws)[0]
             self.assertEqual(rec.fm["visibility"], "player-visible")
             self.assertIn("text", rec.body)
+
+    def test_archive_is_walked_as_canon_with_mirrored_categories(self):
+        # #62: Archive/ is the record of what happened -- ordinary canon,
+        # mirrored layout. Category follows the mirrored section; unknown
+        # mirrors and root-level strays default to entity so they stay
+        # visible to the front-matter check (fail loud, never a silent hole).
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "Archive/NPCs/old-hag.md":
+                    "---\ntype: npc\nvisibility: gm-only\nstatus: retired\n---\nx",
+                "Archive/Briefs/session-001/old-brief.md": "---\ntype: brief\n---\nx",
+                "Archive/stray.md": "---\ntype: npc\n---\nx",
+                "Archive/_Done/never.md": "machinery inside canon stays out",
+                "Archive/README.md": "# readme",
+            })
+            ws = _config.open_workspace(root)
+            by_path = {r.path.relative_to(ws.root).as_posix(): r
+                       for r in review._common.iter_content_files(ws)}
+            self.assertEqual(by_path["Archive/NPCs/old-hag.md"].category, "entity")
+            self.assertEqual(
+                by_path["Archive/Briefs/session-001/old-brief.md"].category,
+                "inherit")
+            self.assertEqual(by_path["Archive/stray.md"].category, "entity")
+            self.assertNotIn("Archive/_Done/never.md", by_path)
+            self.assertNotIn("Archive/README.md", by_path)
+
+    def test_archive_is_a_content_dir_name(self):
+        # A bare [[Archive]] link is a directory link, like [[Mechanics]] --
+        # content_dir_names feeds both the wikilink check and the exporter.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {})
+            ws = _config.open_workspace(root)
+            self.assertIn("archive",
+                          review._common.content_dir_names(ws.config))
+
+
+class TestIsMachinery(unittest.TestCase):
+    def test_prefixes(self):
+        for part, expect in [("_Ignore", True), (".git", True),
+                             ("_notes.md", True), (".DS_Store", True),
+                             ("NPCs", False), ("Archive", False),
+                             ("kim-ha-eun.md", False), ("a_b.md", False)]:
+            with self.subTest(part=part):
+                self.assertEqual(review._common.is_machinery(part), expect)
 
 
 class TestVisibilityAudit(unittest.TestCase):
@@ -352,6 +444,31 @@ class TestCompendium(unittest.TestCase):
 
             self.assertNotIn("Mechanics/species-house-rule.md", flagged)
 
+    def test_archived_entity_files_still_require_indexing(self):
+        # Retiring a file does not un-index it (#62): the compendium entry
+        # moves with the file. Membership keys on the mirrored section.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "Archive/NPCs/old-hag.md": "---\ntype: npc\n---\nx",
+                "compendium.md": "# c\n",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            found = review.check_compendium(files, ws)
+            self.assertEqual([f.file for f in found],
+                             ["Archive/NPCs/old-hag.md"])
+
+    def test_archived_files_outside_compendium_sections_are_not_required(self):
+        # Sessions is not a compendium dir live, so it is not one archived.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "Archive/Sessions/session-001.md": "---\ntype: session\n---\nx",
+                "compendium.md": "# c\n",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            self.assertEqual(review.check_compendium(files, ws), [])
+
 
 class TestRevealWhen(unittest.TestCase):
     def test_flags_reveal_when_on_non_gm_only(self):
@@ -369,6 +486,57 @@ class TestRevealWhen(unittest.TestCase):
             self.assertIn("Mechanics/bad.md", flagged)
             self.assertNotIn("Mechanics/ok.md", flagged)
             self.assertNotIn("Mechanics/plain.md", flagged)
+
+
+class TestNameCollisions(unittest.TestCase):
+    """#62: every stem and alias among authority files must name exactly
+    one file. The exporter refuses ambiguous links; this check surfaces
+    them at review time instead of deploy time."""
+
+    def test_live_vs_archive_stem_collision_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/old-hag.md": "---\ntype: npc\n---\nnew",
+                "Archive/NPCs/old-hag.md":
+                    "---\ntype: npc\nstatus: retired\n---\nold",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            [f] = review.check_name_collisions(files, ws.root)
+            self.assertEqual(f.severity, "error")
+            self.assertIn("NPCs/old-hag.md", f.message)
+            self.assertIn("Archive/NPCs/old-hag.md", f.message)
+
+    def test_alias_collisions_are_errors_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/kim.md": "---\ntype: npc\naliases: [The Ghost]\n---\nx",
+                "NPCs/cho.md": "---\ntype: npc\naliases: [The Ghost]\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            found = review.check_name_collisions(files, ws.root)
+            self.assertEqual(len(found), 1)
+            self.assertIn("NPCs/cho.md", found[0].message)
+            self.assertIn("NPCs/kim.md", found[0].message)
+
+    def test_the_briefs_pairing_is_exempt(self):
+        # The doctrine REQUIRES a brief's stem to match its subject's
+        # writeup (doctrine: "Brief filenames must match their writeup").
+        # Inherit files are designed subordination, not ambiguous authority,
+        # and they are never exported.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\n---\nx",
+                "Briefs/session-001/mira-venn.md": "---\ntype: brief\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            self.assertEqual(review.check_name_collisions(files, ws.root), [])
+
+    def test_wired_into_checkup(self):
+        self.assertIn("name-collisions", review.CHECKS)
+        self.assertIn("name-collisions", review.SUITES["checkup"])
 
 
 class TestRunnerCLI(unittest.TestCase):
@@ -463,13 +631,13 @@ class TestMainWorkspace(unittest.TestCase):
             # exit 0 exactly. Accepting 1 as well would let a fixture that
             # started erroring pass unnoticed.
             self.assertEqual(rc, 0, err)
-            self.assertTrue((root / "Reviews" / "checkup.html").is_file())
+            self.assertTrue((root / "_Reviews" / "checkup.html").is_file())
             # ...and the printed path is workspace-relative, not absolute.
             # Asserting the tail alone does not show that: an absolute
-            # /tmp/.../Reviews/checkup.html contains it too. The literal must
+            # /tmp/.../_Reviews/checkup.html contains it too. The literal must
             # include what comes immediately BEFORE the path, so anything
-            # printed between "HTML report: " and "Reviews/" fails.
-            self.assertIn("HTML report: Reviews/checkup.html", out)
+            # printed between "HTML report: " and "_Reviews/" fails.
+            self.assertIn("HTML report: _Reviews/checkup.html", out)
 
     def test_missing_workspace_returns_nonzero_with_a_clear_message(self):
         # --workspace pointing at a directory with no campaign.toml is an
@@ -490,7 +658,7 @@ class TestHtml(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as d:
             dest = r.write_html("checkup", findings, Path(d))
-            self.assertEqual(dest, Path(d) / "Reviews" / "checkup.html")
+            self.assertEqual(dest, Path(d) / "_Reviews" / "checkup.html")
             self.assertTrue(dest.is_file())
             html_text = dest.read_text(encoding="utf-8")
             self.assertIn("NPCs/b.md", html_text)

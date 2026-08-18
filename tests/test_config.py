@@ -52,11 +52,15 @@ class TestConfigLoad(unittest.TestCase):
         self.assertIn("Briefs", cfg.inherit_dirs)
         self.assertIn("AGENTS.md", cfg.root_docs)
 
-    def test_exclude_dirs_always_include_git(self):
+    def test_exclude_dirs_no_longer_carries_git(self):
+        # .git/.github protection moved from MANDATORY_EXCLUDES to the
+        # .-prefix machinery rule (#62) -- see test_review's
+        # TestEnumerator.test_git_internals_are_never_walked for the
+        # behavioural guard.
         cfg = _config.load(self._ws(MINIMAL + '\n[workspace]\nexclude_dirs = ["OnlyThis"]\n'))
         self.assertIn("OnlyThis", cfg.exclude_dirs)
-        self.assertIn(".git", cfg.exclude_dirs)
-        self.assertIn(".github", cfg.exclude_dirs)
+        self.assertNotIn(".git", cfg.exclude_dirs)
+        self.assertNotIn(".github", cfg.exclude_dirs)
 
     def test_compendium_dirs_is_explicit_not_derived(self):
         # The old code derived this as ENTITY_DIRS - {Sessions, Handouts}.
@@ -177,7 +181,7 @@ class TestConfigLoad(unittest.TestCase):
     def test_briefs_sheets_perceptions_dirs_default_to_the_conventional_names(self):
         cfg = _config.load(self._ws(MINIMAL))
         self.assertEqual(cfg.briefs_dir, "Briefs")
-        self.assertEqual(cfg.sheets_dir, "Sheets")
+        self.assertEqual(cfg.sheets_dir, "_Sheets")
         self.assertEqual(cfg.perceptions_dir, "Perceptions")
 
     def test_briefs_sheets_perceptions_dirs_honour_explicit_overrides(self):
@@ -189,6 +193,48 @@ class TestConfigLoad(unittest.TestCase):
         self.assertEqual(cfg.briefs_dir, "SessionBriefs")
         self.assertEqual(cfg.sheets_dir, "OutputSheets")
         self.assertEqual(cfg.perceptions_dir, "PlayerPerceptions")
+
+    def test_archive_dir_default_and_override(self):
+        cfg = _config.load(self._ws(MINIMAL))
+        self.assertEqual(cfg.archive_dir, "Archive")
+        cfg = _config.load(self._ws(
+            MINIMAL + '\n[workspace]\narchive_dir = "History"\n'))
+        self.assertEqual(cfg.archive_dir, "History")
+
+    def test_archive_dir_rejects_machinery_and_collisions(self):
+        # The archive is canon by definition (#62): a machinery-marked name
+        # would exclude it from every walk, and a section or staging name
+        # would double-book a directory that has another meaning.
+        for bad in ('archive_dir = "_Archive"',
+                    'archive_dir = ".Archive"',
+                    'archive_dir = "NPCs"',
+                    'archive_dir = "Briefs"'):
+            with self.subTest(bad=bad):
+                with self.assertRaises(_config.ConfigError):
+                    _config.load(self._ws(
+                        MINIMAL + "\n[workspace]\n" + bad + "\n"))
+
+    def test_archive_dir_rejects_empty_and_path_escaping_values(self):
+        # archive_dir is the only one of these keys that opens a walk
+        # root; an empty string makes that root the workspace root itself
+        # (duplicating every file), and '/' or a dot-segment let it point
+        # somewhere other than one directory directly under the root.
+        for bad in ('archive_dir = ""',
+                    'archive_dir = "Sub/Archive"',
+                    'archive_dir = "."',
+                    'archive_dir = ".."'):
+            with self.subTest(bad=bad):
+                with self.assertRaises(_config.ConfigError):
+                    _config.load(self._ws(
+                        MINIMAL + "\n[workspace]\n" + bad + "\n"))
+
+    def test_default_exclude_dirs_is_the_repo_infra_exemption(self):
+        cfg = _config.load(self._ws(MINIMAL))
+        # docs/scripts/tests plus the always-appended staging dirs; the
+        # underscore names are the rule's job now, not the enumeration's.
+        self.assertEqual(cfg.exclude_dirs,
+                         frozenset({"docs", "scripts", "tests",
+                                    "_ExtractInbound", "_AgentDrafts"}))
 
     def test_type_dirs_defaults_to_the_conventional_mapping(self):
         cfg = _config.load(self._ws(MINIMAL))

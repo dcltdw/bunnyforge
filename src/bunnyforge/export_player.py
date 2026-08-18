@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-export_player.py — write player-safe copies of content files to Export/.
+export_player.py — write player-safe copies of content files to _Export/.
 
-Direction: workspace -> Export/. This script never writes anywhere else and
-never modifies workspace content; Export/ is disposable, generated output
+Direction: workspace -> _Export/. This script never writes anywhere else and
+never modifies workspace content; _Export/ is disposable, generated output
 (gitignored — see .gitignore) and safe to delete and regenerate at any time.
 
 Visibility rules (see AGENTS.md -> Player visibility):
 
 - `gm-only` files are skipped entirely — not exported in any form, not even
-  their filename appears in Export/.
+  their filename appears in _Export/.
 - `player-visible` files are exported with the standard GM meta-sections
   (## Design intent, ## Balance notes, ## Playtest log) removed, wherever in
   the heading hierarchy they occur.
@@ -176,7 +176,7 @@ def run_export(ws: Workspace, out_dir: Path) -> tuple[ExportResult, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bunnyforge export-player",
-        description="Write player-safe copies of content files to Export/.")
+        description="Write player-safe copies of content files to _Export/.")
     parser.add_argument(
         "--workspace", metavar="PATH",
         help="Campaign workspace root (default: $BUNNYFORGE_WORKSPACE, else "
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    result, log = run_export(ws, ws.root / "Export")
+    result, log = run_export(ws, ws.root / "_Export")
 
     for line in log:
         if "REFUSED" in line:

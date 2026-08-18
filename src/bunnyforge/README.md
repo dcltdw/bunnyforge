@@ -210,7 +210,7 @@ are skipped unless `--overwrite` is passed.
 
 ## export_player.py
 
-Writes player-safe copies of content files to `Export/` (gitignored,
+Writes player-safe copies of content files to `_Export/` (gitignored,
 generated, safe to delete and regenerate).
 
 `gm-only` files are skipped entirely — not written, not even by name. For
@@ -236,7 +236,7 @@ wikilink policy. There is no separate handout publisher.
 
 ## deploy_export.py
 
-Renders `Export/` into a DokuWiki page tree — content pages in DokuWiki markup
+Renders `_Export/` into a DokuWiki page tree — content pages in DokuWiki markup
 plus include-wrappers — and deploys it to the wiki over DokuWiki's JSON-RPC
 API. Three invocations:
 
@@ -529,16 +529,16 @@ anything else).
 Runs a named suite of workspace checks on demand.
 
     python3 -m bunnyforge.review checkup          # terminal report (plain text)
-    python3 -m bunnyforge.review checkup --html   # also writes Reviews/checkup.html
+    python3 -m bunnyforge.review checkup --html   # also writes _Reviews/checkup.html
 
-The `checkup` suite runs five mechanical checks: visibility-audit, front-matter,
-wikilinks, compendium-completeness, and reveal-when consistency. Exit code is
-non-zero if any check produces an error. Adding a check: write a
-`check_*(files, workspace)` function, register it in `CHECKS`, and add its name
-to a suite in `SUITES`. A check needing the whole `Workspace` (for its config)
-goes in `_NEEDS_WORKSPACE`; one needing a DokuWiki install root goes in
-`_NEEDS_WIKI`. The agent-judgment half of the checkup lives in
-`checks/checkup.md`.
+The `checkup` suite runs six mechanical checks: visibility-audit, front-matter,
+wikilinks, compendium-completeness, reveal-when consistency, and name
+collisions. Exit code is non-zero if any check produces an error. Adding a
+check: write a `check_*(files, workspace)` function, register it in `CHECKS`,
+and add its name to a suite in `SUITES`. A check needing the whole
+`Workspace` (for its config) goes in `_NEEDS_WORKSPACE`; one needing a
+DokuWiki install root goes in `_NEEDS_WIKI`. The agent-judgment half of the
+checkup lives in `checks/checkup.md`.
 
 ### Accepting a finding
 

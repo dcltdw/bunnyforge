@@ -27,15 +27,12 @@ from bunnyforge import _workspace
 from bunnyforge._workspace import (  # noqa: F401
     CONFIG_NAME, DOCS_URL, WorkspaceError)
 
-# Never walked, whatever the config says. Without this floor, a campaign that
-# omitted them from exclude_dirs would treat its own git internals as content.
-MANDATORY_EXCLUDES = frozenset({".git", ".github"})
-
 Config = namedtuple(
     "Config",
     "name namespace entity_dirs inherit_dirs compendium_dirs root_docs "
     "exclude_dirs names_cultures names_official_culture names_spelling "
-    "briefs_dir sheets_dir perceptions_dir type_dirs inbound_dir drafts_dir "
+    "briefs_dir sheets_dir perceptions_dir archive_dir type_dirs "
+    "inbound_dir drafts_dir "
     "wiki_url wiki_install_root accepted snapshot_max_age_days fetch_command",
     # wiki_url and wiki_install_root: [wiki] is entirely optional, so a
     # workspace using neither RPC nor the `wiki` review suite leaves both
@@ -116,8 +113,11 @@ _DEFAULTS = {
     "root_docs": ["AGENTS.md", "campaign-doctrine.md", "compendium.md",
                   "front-burner.md", "open-questions.md", "out-of-game.md",
                   "situation-design.md", "style-guide.md", "tickets.md"],
-    "exclude_dirs": ["_Ignore", "_Archive", "_Templates",
-                     "Sheets", "Reviews", "docs", "scripts", "tests"],
+    # The repo-infrastructure exemption: directories that hold the tooling's
+    # own source, not campaign content. The underscore- and dot-prefixed
+    # machinery names (staging, archive-adjacent, generated output) are the
+    # machinery rule's job now (#62), not this enumeration's.
+    "exclude_dirs": ["docs", "scripts", "tests"],
     # The GM's inbound queue (material authored elsewhere, awaiting
     # extraction) and the agents' drafts directory (output awaiting GM
     # review). Both are appended to exclude_dirs at load time, so neither
@@ -126,8 +126,9 @@ _DEFAULTS = {
     "inbound_dir": "_ExtractInbound",
     "drafts_dir": "_AgentDrafts",
     "briefs_dir": "Briefs",
-    "sheets_dir": "Sheets",
+    "sheets_dir": "_Sheets",
     "perceptions_dir": "Perceptions",
+    "archive_dir": "Archive",
     "type_dirs": {"npc": "NPCs", "faction": "Factions", "place": "Setting"},
 }
 
@@ -339,6 +340,37 @@ def load(workspace: Path) -> Config:
                 "— it would be excluded from every walk; pick a directory "
                 "of its own (convention: a _-prefixed name)")
 
+    archive_dir = _str(ws, "archive_dir")
+    if not archive_dir or "/" in archive_dir or archive_dir in (".", ".."):
+        # archive_dir opens a walk root (unlike the other defaultable
+        # dirs), so a shape that resolves outside "one directory directly
+        # under the workspace root" — empty, containing a separator, or a
+        # dot-segment — makes that root escape the intended shape. An
+        # empty string is the sharp one: it makes the walk root the
+        # workspace root itself, duplicating every other walk.
+        raise ConfigError(
+            f"{path}: workspace.archive_dir = {archive_dir!r} must name a "
+            "single directory directly under the workspace root — empty, "
+            "a path containing '/', or '.'/'..' would let the archive "
+            "walk escape that shape")
+    if archive_dir in entity_dirs or archive_dir in inherit_dirs:
+        raise ConfigError(
+            f"{path}: workspace.archive_dir = {archive_dir!r} names a "
+            "content section — the archive mirrors sections inside itself; "
+            "pick a directory of its own")
+    if archive_dir[:1] in ("_", "."):
+        # Inline _common.is_machinery: _common imports _config, so the
+        # shared predicate cannot be imported here.
+        raise ConfigError(
+            f"{path}: workspace.archive_dir = {archive_dir!r} is _- or "
+            ".-prefixed — the archive is canon by definition (#62); a "
+            "machinery-marked name would exclude it from every walk")
+    if archive_dir in (inbound_dir, drafts_dir):
+        raise ConfigError(
+            f"{path}: workspace.archive_dir = {archive_dir!r} collides "
+            "with inbound_dir/drafts_dir, which are excluded from every "
+            "walk — the archive must not be")
+
     return Config(
         name=campaign.get("name", namespace),
         namespace=namespace,
@@ -347,13 +379,14 @@ def load(workspace: Path) -> Config:
         compendium_dirs=_str_tuple(ws, "compendium_dirs"),
         root_docs=_str_tuple(ws, "root_docs"),
         exclude_dirs=(frozenset(_str_tuple(ws, "exclude_dirs"))
-                      | MANDATORY_EXCLUDES | {inbound_dir, drafts_dir}),
+                      | {inbound_dir, drafts_dir}),
         names_cultures=names.get("cultures"),
         names_official_culture=names.get("official_culture"),
         names_spelling=spelling,
         briefs_dir=_str(ws, "briefs_dir"),
         sheets_dir=_str(ws, "sheets_dir"),
         perceptions_dir=_str(ws, "perceptions_dir"),
+        archive_dir=archive_dir,
         type_dirs=_type_dirs(ws),
         inbound_dir=inbound_dir,
         drafts_dir=drafts_dir,

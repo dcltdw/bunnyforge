@@ -119,9 +119,10 @@ start the server with `--allow-direct-edits`.
 kind (`new` or `revision`), title, summary, and — for revisions — whether
 canon changed underneath the proposal (`stale`). `read_draft(path)`
 returns one in full. They exist so the agent picks up its own earlier
-work and merges rather than re-writing; a `_`-prefixed subdirectory
-(say, `_AgentDrafts/_Rejected/`, if you use rejection-by-moving) is
-never listed or read, so rejected material stays rejected.
+work and merges rather than re-writing; a `_`- or `.`-prefixed
+subdirectory (say, `_AgentDrafts/_Rejected/`, if you use
+rejection-by-moving) is never listed or read, so rejected material
+stays rejected.
 `campaign_overview`'s `drafts_pending` count is the discovery hook for
 this — it tells the agent there is earlier work worth resuming before it
 calls `list_drafts()`.
@@ -137,8 +138,8 @@ crashing). Both tools' descriptions carry your AGENTS.md contract: the
 agent calls them **only when you ask it to extract**. It learns the
 queue is non-empty from `campaign_overview`'s `inbound_pending` count —
 which permits noticing and offering, never unbidden reading.
-`_ExtractInbound/_Done/` and any other `_`-prefixed area are invisible
-to both tools, exactly like `_Ignore/`.
+`_ExtractInbound/_Done/` and any other `_`- or `.`-prefixed area are
+invisible to both tools, exactly like `_Ignore/`.
 
 **Write back, into canon — only if you ask for it:**
 
@@ -161,7 +162,7 @@ a decision you make when starting the server, not a setting that
 quietly persists.
 
 Publishing is structurally absent in every mode: no tool here can reach
-`Export/` or the wiki, so a remote agent cannot leak GM-only material to
+`_Export/` or the wiki, so a remote agent cannot leak GM-only material to
 players even by accident.
 
 ## Resetting access

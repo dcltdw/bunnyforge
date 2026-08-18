@@ -87,6 +87,25 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
                       "AGENTS.md no longer tells an agent to read the "
                       "campaign-owned half; the split is inert without it")
 
+    def test_the_underscore_convention_is_stated_once(self):
+        # #62: one statement of the meaning -- _ means not canon, both
+        # directions, with the repo-infra exemption and the default read
+        # contract -- and the archive rename is total: nothing in the
+        # packaged doctrine may still say _Archive.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("## What a leading underscore means", doctrine)
+        section = doctrine.split("## What a leading underscore means", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        for needle in ("not canon", "`docs/`", "`_Ignore/`",
+                       "`_ExtractInbound/`", "`_AgentDrafts/`",
+                       "`Archive/`", "[[campaign-doctrine]]"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, section)
+        self.assertNotIn("_Archive", doctrine)
+        self.assertNotIn("`Sheets/`", doctrine)
+        self.assertNotIn("`Export/`", doctrine)
+        self.assertNotIn("`Reviews/`", doctrine)
+
 
 def _packaged_data_root() -> Path:
     """The data/ tree as a real directory.
@@ -500,13 +519,12 @@ class TestGeneratedConfig(unittest.TestCase):
                 self.assertEqual(getattr(cfg, key),
                                  tuple(_config._DEFAULTS[key]))
         for key in ("briefs_dir", "sheets_dir", "perceptions_dir",
-                    "type_dirs"):
+                    "archive_dir", "type_dirs"):
             with self.subTest(key=key):
                 self.assertEqual(getattr(cfg, key), _config._DEFAULTS[key])
         self.assertEqual(
             cfg.exclude_dirs,
             frozenset(_config._DEFAULTS["exclude_dirs"])
-            | _config.MANDATORY_EXCLUDES
             | {_config._DEFAULTS["inbound_dir"], _config._DEFAULTS["drafts_dir"]})
 
     def test_name_and_namespace_carry_the_substituted_values(self):
