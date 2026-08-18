@@ -108,7 +108,9 @@ All of it lands in the agents' drafts directory (`drafts_dir`, default
 `_AgentDrafts`) and goes no further. That directory is always excluded
 from the canon read tools — whatever `exclude_dirs` says — so drafts stay
 invisible to every other bunnyforge command until you promote them.
-**In the default configuration the agent cannot alter canon at all.**
+**In the default configuration the agent cannot alter canon at all** —
+promotion is manual and yours, done by hand outside any tool, unless you
+start the server with `--allow-direct-edits`.
 
 **Read drafts back:** `list_drafts()` gives every pending draft with its
 kind (`new` or `revision`), title, summary, and — for revisions — whether
@@ -119,7 +121,8 @@ work and merges rather than re-writing; a `_`-prefixed subdirectory
 never listed or read, so rejected material stays rejected.
 
 **The inbound queue — read only when you ask:** `_ExtractInbound/`
-(`inbound_dir`) is yours: material you authored elsewhere, awaiting
+(`inbound_dir`, also always excluded from the canon read tools regardless
+of `exclude_dirs`) is yours: material you authored elsewhere, awaiting
 extraction. `list_inbound()` lists every live file — all formats, each
 marked `readable` or not — and `read_inbound(path)` returns text formats
 (`.md`, `.txt`, `.html`, `.htm`; anything else is listed but refused
