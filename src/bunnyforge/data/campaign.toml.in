@@ -31,11 +31,11 @@ cultures = "names/cultures"        # a DIRECTORY of one-file-per-culture
 # root_docs       = ["AGENTS.md", "campaign-doctrine.md", "compendium.md",
 #                    "front-burner.md", "open-questions.md", "out-of-game.md",
 #                    "situation-design.md", "style-guide.md", "tickets.md"]
-# exclude_dirs    = ["_Ignore", "_Archive", "_Templates",
-#                    "Sheets", "Reviews", "docs", "scripts", "tests"]
+# exclude_dirs    = ["docs", "scripts", "tests"]
 # briefs_dir      = "Briefs"
-# sheets_dir      = "Sheets"
+# sheets_dir      = "_Sheets"
 # perceptions_dir = "Perceptions"
+# archive_dir     = "Archive"
 # inbound_dir     = "_ExtractInbound"  # the GM's inbound queue; always
 #                                      # excluded from canon, listed or not
 # drafts_dir      = "_AgentDrafts"     # agent output awaiting review; always

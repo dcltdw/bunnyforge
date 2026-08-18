@@ -506,7 +506,6 @@ class TestGeneratedConfig(unittest.TestCase):
         self.assertEqual(
             cfg.exclude_dirs,
             frozenset(_config._DEFAULTS["exclude_dirs"])
-            | _config.MANDATORY_EXCLUDES
             | {_config._DEFAULTS["inbound_dir"], _config._DEFAULTS["drafts_dir"]})
 
     def test_name_and_namespace_carry_the_substituted_values(self):

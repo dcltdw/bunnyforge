@@ -212,14 +212,14 @@ class TestBuildSheetsMain(unittest.TestCase):
             rc, out, _ = self._run_main(root, "1")
 
             self.assertEqual(rc, 0)
-            dest = root / "Sheets" / "session-001" / "npc-mira-venn.html"
+            dest = root / "_Sheets" / "session-001" / "npc-mira-venn.html"
             self.assertTrue(dest.is_file())
             self.assertIn("cunning merchant", dest.read_text(encoding="utf-8"))
 
     def test_builds_sheet_honours_type_dirs_and_sheets_dir_overrides(self):
         # Same scenario, but the workspace renames both the writeup directory
         # (via type_dirs) and the output directory (via sheets_dir). If
-        # main() ever hardcoded "NPCs" or "Sheets" instead of reading the
+        # main() ever hardcoded "NPCs" or "_Sheets" instead of reading the
         # config, this would look in the wrong places and fail to find/write
         # the file.
         with tempfile.TemporaryDirectory() as d:
@@ -246,7 +246,7 @@ class TestBuildSheetsMain(unittest.TestCase):
             dest = root / "Output" / "session-001" / "npc-mira-venn.html"
             self.assertTrue(dest.is_file())
             self.assertIn("cunning merchant", dest.read_text(encoding="utf-8"))
-            self.assertFalse((root / "Sheets").exists())
+            self.assertFalse((root / "_Sheets").exists())
 
     def test_builds_sheet_honours_briefs_dir_override(self):
         # briefs_dir had no live guard: the repo's own Briefs/ contains only
@@ -274,7 +274,7 @@ class TestBuildSheetsMain(unittest.TestCase):
             rc, out, _ = self._run_main(root, "1")
 
             self.assertEqual(rc, 0)
-            dest = root / "Sheets" / "session-001" / "npc-mira-venn.html"
+            dest = root / "_Sheets" / "session-001" / "npc-mira-venn.html"
             self.assertTrue(dest.is_file())
             self.assertIn("cunning merchant", dest.read_text(encoding="utf-8"))
             self.assertFalse((root / "Briefs").exists())
