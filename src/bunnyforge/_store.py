@@ -159,10 +159,18 @@ class WorkspaceStore:
         # the list it promises cannot disagree. A bare rglob would include
         # files inside excluded subdirectories that list_entities omits.
         counts: dict[str, int] = {}
+        archive_counts: dict[str, int] = {}
+        archive = cfg.archive_dir
         for rec in _common.iter_content_files(self.ws):
             parts = rec.path.relative_to(self.ws.root).parts
             if len(parts) > 1:
                 counts[parts[0]] = counts.get(parts[0], 0) + 1
+            # The archive breakdown applies the sections rule one level
+            # down (#66): count the mirror when there is one. A stray at
+            # Archive/*.md stays in the flat Archive total only, as root
+            # docs are absent from sections.
+            if parts[0] == archive and len(parts) > 2:
+                archive_counts[parts[1]] = archive_counts.get(parts[1], 0) + 1
         # Only directories that exist: a section the campaign has not created
         # yet is absent, not empty. Reporting it as 0 would present an unused
         # part of the layout as an emptied one.
@@ -178,6 +186,8 @@ class WorkspaceStore:
         # non-empty and offer to extract, without reading it unbidden.
         out["inbound_pending"] = len(self.list_inbound())
         out["drafts_pending"] = len(self.list_drafts())
+        if (self.ws.root / archive).is_dir():
+            out["archive_sections"] = archive_counts
         return out
 
     def list_entities(self, section: str, scope: str = "both") -> list[dict]:

@@ -127,6 +127,20 @@ class TestOverview(StoreCase):
         hits = store.search("recorded", section="Archive")
         self.assertEqual(hits[0]["path"], "Archive/NPCs/old-hag.md")
 
+    def test_archive_sections_breaks_the_archive_down_by_mirror(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        ov = store.overview()
+        # The stray at Archive/stray.md is in the flat total but no
+        # breakdown entry -- the sections rule applied one level down,
+        # exactly as root docs are absent from sections.
+        self.assertEqual(ov["sections"]["Archive"], 2)
+        self.assertEqual(ov["archive_sections"], {"NPCs": 1})
+
+    def test_archive_sections_absent_without_an_archive(self):
+        # Absent, not empty: same philosophy as sections.
+        store = _store.WorkspaceStore(self.make_ws())
+        self.assertNotIn("archive_sections", store.overview())
+
 
 class TestListEntities(StoreCase):
 
