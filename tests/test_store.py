@@ -495,3 +495,47 @@ class TestWriteEntity(StoreCase):
             store.write_entity("NPCs/nobody.md", "x")
         with self.assertRaises(_store.StoreError):
             store.write_entity("../outside.md", "x")
+
+
+class TestUpdateDraft(StoreCase):
+    def test_overwrites_an_existing_draft(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.save_draft("NPCs", "Cho", "old")
+        self.assertEqual(store.update_draft(rel, "new"), rel)
+        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"), "new")
+
+    def test_missing_draft_is_refused_naming_save_draft(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.update_draft("_AgentDrafts/NPCs/nobody.md", "x")
+        self.assertIn("save_draft", str(ctx.exception))
+
+    def test_canonical_and_escape_paths_are_refused(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.update_draft("NPCs/kim-ha-eun.md", "x")
+        with self.assertRaises(_store.StoreError):
+            store.update_draft("../outside.md", "x")
+
+    def test_rebaselines_a_revision_shadow(self):
+        # The refusal flow that leads here forced a read-and-merge, so the
+        # agent has seen current canon: updating a shadow re-records its
+        # base, and the revision stops being stale.
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.propose_revision("NPCs/kim-ha-eun.md", "first")
+        (ws.root / "NPCs/kim-ha-eun.md").write_text("GM edit",
+                                                    encoding="utf-8")
+        self.assertIs(store.list_drafts()[0]["stale"], True)
+        store.update_draft("_AgentDrafts/NPCs/kim-ha-eun.md", "merged")
+        self.assertIs(store.list_drafts()[0]["stale"], False)
+
+    def test_underscore_component_is_refused(self):
+        ws = self.make_ws()
+        rejected = ws.root / "_AgentDrafts" / "_Rejected"
+        rejected.mkdir(parents=True)
+        (rejected / "dead.md").write_text("x", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            _store.WorkspaceStore(ws).update_draft(
+                "_AgentDrafts/_Rejected/dead.md", "resurrect")

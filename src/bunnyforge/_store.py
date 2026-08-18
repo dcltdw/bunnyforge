@@ -333,6 +333,22 @@ class WorkspaceStore:
         self._set_base(rel, target)
         return rel
 
+    def update_draft(self, path: str, content: str) -> str:
+        """Overwrite one existing draft — the only overwrite door, so
+        clobbering is always deliberate: the path must already exist,
+        which means it came from list_drafts or read_draft."""
+        p = self._draft_path(path)
+        if not p.is_file():
+            raise StoreError(
+                f"no such draft: {path} — save_draft creates new drafts; "
+                "list_drafts shows what exists")
+        p.write_text(content, encoding="utf-8")
+        rel = p.relative_to(self.ws.root).as_posix()
+        mirrored = self.ws.root / p.relative_to(self._drafts())
+        if mirrored.is_file():
+            self._set_base(rel, mirrored)
+        return rel
+
     def list_drafts(self) -> list[dict]:
         """Every pending draft: path, kind ("new" content or a "revision"
         of an existing file), title and summary from front matter, and —

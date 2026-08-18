@@ -113,7 +113,7 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         names = {t.name for t in await server.list_tools()}
         self.assertLessEqual(
-            {"save_draft", "propose_revision", "list_drafts", "read_draft"},
+            {"save_draft", "propose_revision", "update_draft", "list_drafts", "read_draft"},
             names)
 
     async def test_list_drafts_reports_what_was_drafted(self):

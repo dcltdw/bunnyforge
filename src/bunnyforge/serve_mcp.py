@@ -139,6 +139,15 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         return store.propose_revision(path, content)
 
     @server.tool()
+    def update_draft(path: str, content: str) -> str:
+        """Overwrite one of your existing drafts with revised content —
+        the deliberate way to iterate on a draft across sessions.
+        read_draft it first and merge; updating a revision shadow also
+        re-baselines it against current canon. Paths come from
+        list_drafts."""
+        return store.update_draft(path, content)
+
+    @server.tool()
     def list_drafts() -> list[dict]:
         """List your own unpromoted drafts from this and earlier sessions:
         path, kind ("new" content or a "revision" of an existing file),
