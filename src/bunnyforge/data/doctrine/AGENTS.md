@@ -13,16 +13,30 @@ from it** — decisions rest on precedent, which is the whole reason it is kept.
 `_Ignore/` holds raw material, plus retired work that set no precedent: **never
 read it** unless I name a file in it and ask.
 
+## This file and `[[campaign-doctrine]]`
+
+This file is generic. The bunnyforge package owns it, ships it identically to
+every workspace, and replaces it wholesale when a new version is adopted — so
+anything written into it that is true of this campaign only will be lost.
+`[[campaign-doctrine]]` is the other half: campaign-specific rules, owned by
+me, never overwritten.
+
+Where the two disagree, `[[campaign-doctrine]]` wins. It is required to name
+the rule here that it displaces, so an exception is visible from both sides
+rather than inferred.
+
 ## Read order
 
 At the start of any working session, read in this order:
 
-1. `[[front-burner]]` — current state. Outranks every older file on any conflict.
-2. `[[compendium]]` — the index. Use it to find what else is relevant.
-3. `[[style-guide]]` — binding constraints on tone and voice.
-4. `[[situation-design]]` — how prep material is structured. Read before
+1. `[[campaign-doctrine]]` — this campaign's own rules. First, because it can
+   override anything in this file, and it says so where it does.
+2. `[[front-burner]]` — current state. Outranks every older file on any conflict.
+3. `[[compendium]]` — the index. Use it to find what else is relevant.
+4. `[[style-guide]]` — binding constraints on tone and voice.
+5. `[[situation-design]]` — how prep material is structured. Read before
    building any scenario, NPC, or faction material.
-5. `[[open-questions]]` — what is deliberately undecided.
+6. `[[open-questions]]` — what is deliberately undecided.
 
 Then read the entity files relevant to the task at hand.
 

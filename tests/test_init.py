@@ -74,6 +74,19 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
             "AGENTS.md links to something a fresh workspace does not have, "
             "so `init` cannot ship it verbatim and still pass the gate")
 
+    def test_the_read_order_points_at_campaign_doctrine(self):
+        # The include is prose, not an import: nothing can force an agent to
+        # follow it, and the five root docs already in this list rest on the
+        # same footing. What IS enforceable is that the pointer exists and
+        # that its target resolves -- the second half is the wikilink test
+        # above, which is why both live in this class.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("## Read order", doctrine)
+        read_order = doctrine.split("## Read order", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("[[campaign-doctrine]]", read_order,
+                      "AGENTS.md no longer tells an agent to read the "
+                      "campaign-owned half; the split is inert without it")
+
 
 def _packaged_data_root() -> Path:
     """The data/ tree as a real directory.
