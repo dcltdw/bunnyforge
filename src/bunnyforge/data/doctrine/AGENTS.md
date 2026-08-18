@@ -216,6 +216,27 @@ include the separator, even if the GM notes section is empty. A handout is a
   draft I delete it or move it to `_AgentDrafts/_Rejected/`, which is
   never read, like `_Ignore/`.
 
+## Retrieval scope: live, archive, or both
+
+- When answering questions or reporting what is established, read live and
+  archived material freely. Results are labelled, and the rules above
+  govern presentation: the archive is never current, and where it disagrees
+  with a live file, the live file wins.
+- Creative work on canon — inventing new material, or revising it later —
+  runs under a retrieval scope I own. Drawing on retired material can be
+  deliberate (a successor, an echo) or contamination (a "new" thing that
+  quietly re-skins a retired one). Labels do not protect generation:
+  material read is material that shapes the output. Only I can tell the
+  two intents apart.
+- So at the start of a task that will create or revise canon, ask me
+  whether its retrieval should be live-only, archive-only, or both —
+  unless my request already answers it, or the work's scope is already
+  established. The scope attaches to the work and persists: picking a
+  piece back up later continues under the scope it was made with. One ask
+  per task; hold it until the task changes or I re-scope it.
+- Mechanically: over MCP, pass `scope=` to `search` and `list_entities`;
+  on the filesystem, read or skip `Archive/` accordingly.
+
 ## Speculative material stays speculative
 
 Anything you propose that I have not accepted is `speculative`. Do not carry a
