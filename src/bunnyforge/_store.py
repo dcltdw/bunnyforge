@@ -33,6 +33,8 @@ from bunnyforge._config import Workspace
 SEARCH_CAP = 50       # hits per search reply; the reply says when it truncated
 SNIPPET_RADIUS = 80   # characters of context on each side of a match
 NAME_COUNT_CAP = 50   # names per request; a brainstorm needs a handful, not a page
+SCOPES = ("live", "archive", "both")  # exactly two trees exist (#62), so
+                                      # "both" is the honest union token
 
 # Draft names become filenames. No path separators, no leading dot or
 # underscore (dot-files hide; the _-prefix is the workspace's own marker
@@ -75,6 +77,49 @@ class WorkspaceStore:
         if section not in self._sections():
             raise StoreError(f"unknown section {section!r} — one of: "
                              + ", ".join(self._sections()))
+
+    def _check_retrieval(self, section: str | None, scope: str) -> None:
+        """Validate a search/list_entities filter pair before any walk.
+
+        scope names which tree(s) to read. One combination is a
+        contradiction rather than an empty answer -- the archive
+        section under a scope that excludes archived files -- and a
+        contradiction is refused, not served (#66).
+        """
+        if scope not in SCOPES:
+            raise StoreError(f"unknown scope {scope!r} — one of: "
+                             + ", ".join(SCOPES))
+        if section is not None:
+            self._check_section(section)
+            if scope == "live" and section == self.ws.config.archive_dir:
+                raise StoreError(
+                    f"section {section!r} contradicts scope 'live': "
+                    "archived files are exactly what it excludes — drop "
+                    "the section, or use scope 'archive'")
+
+    def _in_scope(self, parts: tuple[str, ...], section: str | None,
+                  scope: str) -> bool:
+        """One walked file's membership under a validated filter (#66).
+
+        A file is archived iff its first component is the archive dir.
+        section names the CONTENT section and resolves inside the
+        scope's tree(s): live files match on parts[0], archived files
+        on their mirror (parts[1]); the archive dir's own name denotes
+        the archive tree. A stray directly at Archive/*.md has no
+        mirror, so it matches whole-archive queries and no section.
+        """
+        archive = self.ws.config.archive_dir
+        archived = parts[0] == archive
+        if (scope == "live" and archived) or \
+                (scope == "archive" and not archived):
+            return False
+        if section is None:
+            return True
+        if section == archive:
+            return archived
+        if archived:
+            return len(parts) > 2 and parts[1] == section
+        return parts[0] == section
 
     def _canonical(self, path: str) -> Path:
         """Resolve a workspace-relative path, refusing what is not canon.
@@ -160,23 +205,28 @@ class WorkspaceStore:
             raise StoreError(f"no such file: {path}")
         return p.read_text(encoding="utf-8")
 
-    def search(self, query: str, section: str | None = None) -> list[dict]:
+    def search(self, query: str, section: str | None = None,
+               scope: str = "both") -> list[dict]:
         """Case-insensitive substring search across content files.
 
         Deliberately literal rather than clever: an agent that can see the
         matched text decides relevance better than a ranking heuristic
         would, and a substring match is explainable when it surprises.
+
+        scope and section resolve per _in_scope (#66); every hit says
+        whether it is archived, so the caller buckets hits without
+        parsing paths.
         """
         q = query.strip().lower()
         if not q:
             raise StoreError("empty search query")
-        if section is not None:
-            self._check_section(section)
+        self._check_retrieval(section, scope)
 
+        archive = self.ws.config.archive_dir
         hits: list[dict] = []
         for rec in _common.iter_content_files(self.ws):
-            rel = rec.path.relative_to(self.ws.root).as_posix()
-            if section is not None and not rel.startswith(section + "/"):
+            rel = rec.path.relative_to(self.ws.root)
+            if not self._in_scope(rel.parts, section, scope):
                 continue
             text = rec.path.read_text(encoding="utf-8")
             i = text.lower().find(q)
@@ -184,7 +234,8 @@ class WorkspaceStore:
                 continue
             lo = max(0, i - SNIPPET_RADIUS)
             hi = min(len(text), i + len(q) + SNIPPET_RADIUS)
-            hits.append({"path": rel, "snippet": text[lo:hi]})
+            hits.append({"path": rel.as_posix(), "snippet": text[lo:hi],
+                         "archived": rel.parts[0] == archive})
             if len(hits) >= SEARCH_CAP:
                 # Say so rather than truncating silently: a capped reply that
                 # looks complete is worse than a short one that admits it.

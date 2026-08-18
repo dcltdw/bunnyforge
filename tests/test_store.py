@@ -33,6 +33,21 @@ class StoreCase(unittest.TestCase):
             "- resolve the ferry plot\n", encoding="utf-8")
         return _config.open_workspace(root)
 
+    def make_archived_ws(self, toml_extra: str = "") -> _config.Workspace:
+        """make_ws plus a mirrored archive: one archived NPC, and one
+        stray file directly at the archive root (no mirror section)."""
+        ws = self.make_ws(toml_extra)
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        (arch / "old-hag.md").write_text(
+            "---\ntitle: The Old Hag\nsummary: Retired rival on the "
+            "ferry route.\nstatus: retired\n---\n"
+            "She haunted the ferry route.\n", encoding="utf-8")
+        (ws.root / "Archive" / "stray.md").write_text(
+            "---\ntitle: Stray\nsummary: A stray archived note.\n---\n"
+            "ferry flotsam\n", encoding="utf-8")
+        return ws
+
 
 class TestOverview(StoreCase):
 
@@ -220,6 +235,81 @@ class TestSearch(StoreCase):
         store = _store.WorkspaceStore(self.make_ws())
         self.assertEqual(store.search("nothing here says this"), [])
 
+
+class TestScopedSearch(StoreCase):
+    """#66: scope: live | archive | both, section resolving inside the
+    scope's tree(s), every hit labelled archived."""
+
+    def test_default_scope_is_both_and_labels_every_hit(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        by_path = {h["path"]: h["archived"] for h in store.search("ferry")}
+        self.assertEqual(by_path, {
+            "NPCs/kim-ha-eun.md": False,
+            "front-burner.md": False,
+            "Archive/NPCs/old-hag.md": True,
+            "Archive/stray.md": True,
+        })
+
+    def test_scope_live_excludes_archived_hits_keeps_root_docs(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        paths = {h["path"] for h in store.search("ferry", scope="live")}
+        self.assertEqual(paths, {"NPCs/kim-ha-eun.md", "front-burner.md"})
+
+    def test_scope_archive_returns_only_archived_hits(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        paths = {h["path"] for h in store.search("ferry", scope="archive")}
+        self.assertEqual(paths,
+                         {"Archive/NPCs/old-hag.md", "Archive/stray.md"})
+
+    def test_sectioned_both_is_the_union_of_the_trees(self):
+        # section="NPCs" covers NPCs/ AND Archive/NPCs/ under the default.
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        paths = {h["path"] for h in store.search("ferry", section="NPCs")}
+        self.assertEqual(paths,
+                         {"NPCs/kim-ha-eun.md", "Archive/NPCs/old-hag.md"})
+
+    def test_sectioned_archive_scope_resolves_the_mirror(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        hits = store.search("ferry", section="NPCs", scope="archive")
+        self.assertEqual([h["path"] for h in hits],
+                         ["Archive/NPCs/old-hag.md"])
+
+    def test_sectioned_live_scope_stays_pure_live(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        hits = store.search("ferry", section="NPCs", scope="live")
+        self.assertEqual([h["path"] for h in hits], ["NPCs/kim-ha-eun.md"])
+
+    def test_section_archive_means_the_whole_archive(self):
+        # Under "both" and "archive" alike; strays included.
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        for scope in ("both", "archive"):
+            paths = {h["path"] for h in
+                     store.search("ferry", section="Archive", scope=scope)}
+            self.assertEqual(
+                paths, {"Archive/NPCs/old-hag.md", "Archive/stray.md"},
+                scope)
+
+    def test_a_stray_archive_file_is_in_no_mirror_section(self):
+        # "flotsam" appears only in Archive/stray.md, which has no mirror.
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        self.assertEqual(store.search("flotsam", section="NPCs"), [])
+        self.assertEqual(
+            [h["path"] for h in store.search("flotsam")],
+            ["Archive/stray.md"])
+
+    def test_scope_live_with_section_archive_is_a_refused_contradiction(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.search("ferry", section="Archive", scope="live")
+        self.assertIn("contradicts", str(ctx.exception))
+        self.assertIn("archive", str(ctx.exception).lower())
+
+    def test_unknown_scope_is_refused_naming_the_valid_ones(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.search("ferry", scope="everything")
+        for token in ("live", "archive", "both"):
+            self.assertIn(token, str(ctx.exception))
 
 
 # A self-contained culture, built here rather than copied from the shipped
