@@ -425,6 +425,31 @@ class TestCompendium(unittest.TestCase):
 
             self.assertNotIn("Mechanics/species-house-rule.md", flagged)
 
+    def test_archived_entity_files_still_require_indexing(self):
+        # Retiring a file does not un-index it (#62): the compendium entry
+        # moves with the file. Membership keys on the mirrored section.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "Archive/NPCs/old-hag.md": "---\ntype: npc\n---\nx",
+                "compendium.md": "# c\n",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            found = review.check_compendium(files, ws)
+            self.assertEqual([f.file for f in found],
+                             ["Archive/NPCs/old-hag.md"])
+
+    def test_archived_files_outside_compendium_sections_are_not_required(self):
+        # Sessions is not a compendium dir live, so it is not one archived.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "Archive/Sessions/session-001.md": "---\ntype: session\n---\nx",
+                "compendium.md": "# c\n",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            self.assertEqual(review.check_compendium(files, ws), [])
+
 
 class TestRevealWhen(unittest.TestCase):
     def test_flags_reveal_when_on_non_gm_only(self):

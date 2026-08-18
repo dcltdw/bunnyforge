@@ -272,7 +272,13 @@ def check_compendium(files: list[FileRec], ws: Workspace) -> list[Finding]:
     for rec in files:
         if rec.category != "entity":
             continue
-        if rec.path.relative_to(workspace).parts[0] not in ws.config.compendium_dirs:
+        parts = rec.path.relative_to(workspace).parts
+        # An archived file answers to its mirrored section's compendium
+        # membership: retiring a file does not un-index it (#62).
+        section = parts[0]
+        if section == ws.config.archive_dir and len(parts) > 2:
+            section = parts[1]
+        if section not in ws.config.compendium_dirs:
             continue
         if rec.path not in indexed_paths:
             out.append(Finding("warn", "compendium", _rel(rec.path, workspace),
