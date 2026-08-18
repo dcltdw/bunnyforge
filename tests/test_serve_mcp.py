@@ -112,6 +112,41 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         names = {t.name for t in await server.list_tools()}
         self.assertLessEqual({"save_draft", "propose_revision"}, names)
 
+    async def test_staging_read_tools_always_registered(self):
+        # Staging is the agent's own inbox, so reading it back needs no flag:
+        # nothing here can reach canon.
+        server = serve_mcp.build_server(scaffold(self))
+        names = {t.name for t in await server.list_tools()}
+        self.assertLessEqual({"list_staged", "read_staged"}, names)
+
+    async def test_list_staged_reports_what_was_staged(self):
+        store = scaffold(self)
+        server = serve_mcp.build_server(store)
+        await server.call_tool(
+            "save_draft", {"section": "NPCs", "name": "Cho", "content": "x"})
+        payload = await self._text(await server.call_tool("list_staged", {}))
+        self.assertIn("_ExtractInbound/NPCs/Cho.md", payload)
+        self.assertIn("draft", payload)
+
+    async def test_read_staged_round_trips_a_draft(self):
+        store = scaffold(self)
+        server = serve_mcp.build_server(store)
+        await server.call_tool(
+            "save_draft", {"section": "NPCs", "name": "Cho",
+                           "content": "---\ntitle: Cho\n---\nthe smuggler\n"})
+        payload = await self._text(await server.call_tool(
+            "read_staged", {"path": "_ExtractInbound/NPCs/Cho.md"}))
+        self.assertIn("the smuggler", payload)
+
+    async def test_read_staged_refuses_a_canonical_path(self):
+        # The two read doors stay separate: read_staged must not become a
+        # second way into canon.
+        server = serve_mcp.build_server(scaffold(self))
+        with self.assertRaises(Exception) as ctx:
+            await server.call_tool(
+                "read_staged", {"path": "NPCs/kim-ha-eun.md"})
+        self.assertIn("read_entity", str(ctx.exception))
+
     async def test_write_entity_only_with_the_flag(self):
         # The gate is the whole safety story: staging is always available
         # because it cannot reach canon, and canon is reachable only

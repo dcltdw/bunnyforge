@@ -114,7 +114,8 @@ class TestReadEntity(StoreCase):
 
     def test_excluded_dir_is_refused(self):
         # The staging directory is excluded by default, so drafts written
-        # there are not readable back: the read tools serve canon.
+        # there are not readable back through read_entity: it serves canon.
+        # Staging is reached through read_staged instead (TestStagingReads).
         ws = self.make_ws()
         staged = ws.root / "_ExtractInbound"
         staged.mkdir()
@@ -287,6 +288,82 @@ class TestStageRevision(StoreCase):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError):
             store.stage_revision("../outside.md", "x")
+
+
+class TestStagingReads(StoreCase):
+    """The agent's own inbox. Staging stays invisible to the canon read
+    tools; these two methods are the one labelled way back in, so that a
+    draft written last session can be revisited rather than re-invented.
+    """
+
+    def test_listing_distinguishes_a_draft_from_a_revision(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        store.stage_draft("NPCs", "Cho", "x")
+        store.stage_revision("NPCs/kim-ha-eun.md", "y")
+        found = {e["path"]: e["kind"] for e in store.list_staging()}
+        self.assertEqual(found, {
+            "_ExtractInbound/NPCs/Cho.md": "draft",
+            "_ExtractInbound/NPCs/kim-ha-eun.md": "revision",
+        })
+
+    def test_nothing_staged_is_an_empty_list_not_an_error(self):
+        # The staging directory does not exist until something is staged.
+        store = _store.WorkspaceStore(self.make_ws())
+        self.assertEqual(store.list_staging(), [])
+
+    def test_listing_ignores_non_markdown(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.stage_draft("NPCs", "Cho", "x")
+        (ws.root / "_ExtractInbound" / "notes.txt").write_text(
+            "scratch", encoding="utf-8")
+        self.assertEqual([e["path"] for e in store.list_staging()],
+                         ["_ExtractInbound/NPCs/Cho.md"])
+
+    def test_listing_honors_a_configured_staging_dir(self):
+        ws = self.make_ws('\n[workspace]\nstaging_dir = "_Inbox"\n')
+        store = _store.WorkspaceStore(ws)
+        store.stage_draft("NPCs", "Cho", "x")
+        self.assertEqual([e["path"] for e in store.list_staging()],
+                         ["_Inbox/NPCs/Cho.md"])
+
+    def test_read_round_trips_a_staged_file(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        rel = store.stage_draft("NPCs", "Cho", "---\ntitle: Cho\n---\nbody\n")
+        self.assertEqual(store.read_staged(rel),
+                         "---\ntitle: Cho\n---\nbody\n")
+
+    def test_escape_is_refused(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.read_staged("_ExtractInbound/../../outside.md")
+
+    def test_absolute_path_outside_the_workspace_is_refused(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.read_staged("/etc/hosts")
+
+    def test_a_canonical_path_is_refused_and_points_at_read_entity(self):
+        # The inverse guard: read_staged serves staging and nothing else, so
+        # canon reaches the agent through one method only.
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.read_staged("NPCs/kim-ha-eun.md")
+        self.assertIn("read_entity", str(ctx.exception))
+
+    def test_missing_file_is_refused_pointing_at_the_listing(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.read_staged("_ExtractInbound/NPCs/nobody.md")
+        self.assertIn("list_staged", str(ctx.exception))
+
+    def test_a_non_markdown_staged_file_is_refused(self):
+        ws = self.make_ws()
+        (ws.root / "_ExtractInbound").mkdir()
+        (ws.root / "_ExtractInbound" / "notes.txt").write_text(
+            "scratch", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            _store.WorkspaceStore(ws).read_staged("_ExtractInbound/notes.txt")
 
 
 class TestWriteEntity(StoreCase):

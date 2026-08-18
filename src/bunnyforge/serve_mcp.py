@@ -134,6 +134,24 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         path."""
         return store.stage_revision(path, content)
 
+    @server.tool()
+    def list_staged() -> list[dict]:
+        """List everything you have staged and not yet had promoted: each
+        path, and whether it is a "draft" (new content) or a "revision" (a
+        proposed rewrite of an existing file). This is your own inbox, NOT
+        canon — nothing here has been reviewed, and it may never be. Use it
+        to pick up drafts from an earlier session instead of starting them
+        again."""
+        return store.list_staging()
+
+    @server.tool()
+    def read_staged(path: str) -> str:
+        """Read one staged file in full. Paths come from list_staged.
+        Staged material is UNREVIEWED and is not canon — do not treat it as
+        established fact about the campaign; read it to revisit or merge
+        your own earlier drafts. For canonical files, use read_entity."""
+        return store.read_staged(path)
+
     if allow_direct_edits:
         @server.tool()
         def write_entity(path: str, content: str) -> str:

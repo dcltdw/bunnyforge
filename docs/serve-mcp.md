@@ -91,8 +91,8 @@ are missing.
 
 ## What the agent can do
 
-**Read:** `campaign_overview`, `list_entities`, `read_entity`, `search`,
-`generate_names`. Workspace doctrine (`style-guide.md`,
+**Read canon:** `campaign_overview`, `list_entities`, `read_entity`,
+`search`, `generate_names`. Workspace doctrine (`style-guide.md`,
 `situation-design.md`, `AGENTS.md`) is served as MCP *resources* — tell
 the agent to load them before it writes anything for this campaign.
 
@@ -105,11 +105,21 @@ the agent to load them before it writes anything for this campaign.
 
 Both land in the workspace's staging directory (`staging_dir`, default
 `_ExtractInbound`) and go no further. That directory is one of
-`exclude_dirs`, so staged material is invisible to the read tools and to
-every other bunnyforge command until you promote it by hand — it flows
-through whatever extraction workflow your `AGENTS.md` already defines.
-**In the default configuration the agent cannot alter canon at all.** The
-server stages; deciding what becomes canon stays yours.
+`exclude_dirs`, so staged material stays invisible to the canon read tools
+above and to every other bunnyforge command until you promote it by hand —
+it flows through whatever extraction workflow your `AGENTS.md` already
+defines. **In the default configuration the agent cannot alter canon at
+all.** The server stages; deciding what becomes canon stays yours.
+
+**Read back its own staging:** `list_staged()` gives every staged file with
+its kind (`draft` or `revision`); `read_staged(path)` returns one in full.
+They are the one deliberate window into the staging directory, and they say
+so — their tool descriptions tell the agent the material is unreviewed and
+not canon. They exist so it can pick up its own drafts from an earlier
+session and merge them rather than write them again; without them it could
+write into staging and never see the result, not even its own work. They
+reach nothing else: a canonical path handed to `read_staged` is refused.
+Promotion is unchanged — still manual, still yours.
 
 **Write back, into canon — only if you ask for it:**
 
