@@ -39,8 +39,11 @@ KEY_ENV = "BUNNYFORGE_MCP_KEY"
 
 # Workspace doctrine, offered as MCP resources so a fresh conversation can
 # load the house rules before it writes anything. Absent files are simply
-# not listed.
-DOCTRINE_FILES = ("style-guide.md", "situation-design.md", "AGENTS.md")
+# not listed -- which is also what makes campaign-doctrine.md safe to add
+# here: a workspace scaffolded before the doctrine split does not have it,
+# and gets exactly the three resources it got before.
+DOCTRINE_FILES = ("style-guide.md", "situation-design.md", "AGENTS.md",
+                  "campaign-doctrine.md")
 
 _INSTALL_HINT = ("serve-mcp needs its optional dependencies:\n"
                  "  pip install 'bunnyforge[mcp]'")
