@@ -60,10 +60,13 @@ class TestOverview(StoreCase):
         self.assertIsNone(ov["open_questions"])
 
     def test_counts_agree_with_list_entities(self):
-        # An overview count and the list it promises must never disagree.
-        # A bare rglob would count a file inside an excluded subdirectory
-        # that list_entities then omits, so the two are derived from one
-        # walk rather than from two that can drift.
+        # A live section's count agrees with the live-scoped listing it
+        # promises: sections[X] == len(list_entities(X, scope="live")).
+        # Both come from one walk, so a file inside an excluded
+        # subdirectory cannot be counted here and omitted there (a bare
+        # rglob would let the two drift). See
+        # test_counts_reconcile_with_archive_scope for the archive-side
+        # half of the invariant (#66).
         ws = self.make_ws()
         archived = ws.root / "NPCs" / "_Archive"
         archived.mkdir()
@@ -71,6 +74,25 @@ class TestOverview(StoreCase):
         store = _store.WorkspaceStore(ws)
         self.assertEqual(store.overview()["sections"]["NPCs"], 1)
         self.assertEqual(len(store.list_entities("NPCs")), 1)
+
+    def test_counts_reconcile_with_archive_scope(self):
+        # The other half of the invariant (#66): a live section's count
+        # excludes its archived mirror -- it equals list_entities under
+        # scope="live", not the default "both" -- while the Archive
+        # section's count is the whole archive tree, flat, equal to
+        # unsectioned list_entities("Archive").
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        ov = store.overview()
+        self.assertEqual(
+            ov["sections"]["NPCs"],
+            len(store.list_entities("NPCs", scope="live")))
+        self.assertEqual(
+            ov["sections"]["Archive"],
+            len(store.list_entities("Archive")))
+        # Pin the actual numbers too, so a regression that breaks both
+        # sides identically still gets caught.
+        self.assertEqual(ov["sections"]["NPCs"], 1)
+        self.assertEqual(ov["sections"]["Archive"], 2)
 
     def test_existing_but_empty_section_reports_zero(self):
         ws = self.make_ws()
@@ -250,6 +272,26 @@ class TestSearch(StoreCase):
         store = _store.WorkspaceStore(self.make_ws())
         self.assertEqual(store.search("nothing here says this"), [])
 
+    def test_truncation_sentinel_shape_and_position(self):
+        # Spec #66 §2: the sentinel is a notice, not a result -- exactly
+        # {"path", "snippet"}, no "archived" key, and last in the list.
+        ws = self.make_ws()
+        for i in range(_store.SEARCH_CAP + 5):
+            (ws.root / "NPCs" / f"extra-{i:03d}.md").write_text(
+                f"---\ntitle: Extra {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        hits = store.search("ferry")
+        self.assertEqual(len(hits), _store.SEARCH_CAP + 1)
+        for hit in hits[:-1]:
+            self.assertIn("archived", hit)
+        sentinel = hits[-1]
+        self.assertEqual(set(sentinel), {"path", "snippet"})
+        self.assertEqual(sentinel["path"], "")
+        self.assertIn(f"truncated at {_store.SEARCH_CAP} hits",
+                      sentinel["snippet"])
+        self.assertIn("scope='live'", sentinel["snippet"])
+
 
 class TestScopedSearch(StoreCase):
     """#66: scope: live | archive | both, section resolving inside the
@@ -326,6 +368,24 @@ class TestScopedSearch(StoreCase):
         for token in ("live", "archive", "both"):
             self.assertIn(token, str(ctx.exception))
 
+    def test_scope_split_follows_a_non_default_archive_dir(self):
+        # archive_dir is config-driven, not the literal "Archive" -- pin
+        # it against a future hardcode (#66). make_archived_ws hardcodes
+        # "Archive", so this fixture is built by hand under a renamed
+        # archive_dir instead.
+        ws = self.make_ws('\n[workspace]\narchive_dir = "History"\n')
+        arch = ws.root / "History" / "NPCs"
+        arch.mkdir(parents=True)
+        (arch / "old-hag.md").write_text(
+            "---\ntitle: The Old Hag\nsummary: Retired rival on the "
+            "ferry route.\n---\nShe haunted the ferry route.\n",
+            encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        live = {h["path"] for h in store.search("ferry", scope="live")}
+        archived = {h["path"] for h in store.search("ferry", scope="archive")}
+        self.assertEqual(live, {"NPCs/kim-ha-eun.md", "front-burner.md"})
+        self.assertEqual(archived, {"History/NPCs/old-hag.md"})
+
 
 class TestScopedListEntities(StoreCase):
 
@@ -370,6 +430,19 @@ class TestScopedListEntities(StoreCase):
         store = _store.WorkspaceStore(self.make_archived_ws())
         with self.assertRaises(_store.StoreError):
             store.list_entities("NPCs", scope="everything")
+
+    def test_scope_archive_with_no_mirror_is_empty_not_an_error(self):
+        # The non-contradiction counterpart to the refused live+Archive
+        # pair (#66): a live section with no archived mirror simply has
+        # nothing under scope="archive" -- refusal is reserved for
+        # section=archive_dir itself, not for an ordinary miss.
+        ws = self.make_archived_ws()
+        (ws.root / "Factions").mkdir()
+        (ws.root / "Factions" / "harbor-guild.md").write_text(
+            "---\ntitle: Harbor Guild\nsummary: x\n---\nferry\n",
+            encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        self.assertEqual(store.list_entities("Factions", scope="archive"), [])
 
 
 # A self-contained culture, built here rather than copied from the shipped

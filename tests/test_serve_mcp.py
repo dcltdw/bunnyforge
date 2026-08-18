@@ -275,7 +275,9 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
                  for t in await server.list_tools()}
         for name in ("search", "list_entities"):
             self.assertIn("scope", descs[name], name)
-            self.assertIn("ask", descs[name], name)
+            # A substring that dies if the ask-the-GM sentence is removed --
+            # bare "ask" is also satisfied by the unrelated word "task".
+            self.assertIn("ask at task start", descs[name], name)
         self.assertIn("archive_sections", descs["campaign_overview"])
 
     async def test_search_scope_live_excludes_archived_hits(self):

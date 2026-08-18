@@ -92,8 +92,9 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     def campaign_overview() -> dict:
         """Get your bearings in one call: the campaign's name, each section
         with how many entities it holds (the Archive count is the flat
-        total; archive_sections breaks it down by mirrored section), the
-        current front-burner and open-questions documents, and two
+        total; archive_sections breaks it down by mirrored section, present
+        when the campaign has an archive), the current front-burner and
+        open-questions documents, and two
         counts — drafts_pending (your own unpromoted drafts; list_drafts
         to resume them) and inbound_pending (files in the GM's inbound
         queue). If inbound_pending is non-zero you may mention it and
@@ -126,7 +127,9 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         """Search the workspace for a phrase, returning each file that
         matches, the text around the match, and an archived flag. scope
         narrows retrieval to live canon ("live"), archived canon
-        ("archive"), or both (default — every hit is labelled). Use it
+        ("archive"), or both (default — every hit is labelled); section
+        resolves inside the scope's tree(s) the same way as list_entities
+        (section="NPCs" covers NPCs/ and Archive/NPCs/). Use it
         to check what has already been established about a name, place,
         or idea. For creative work the scope is the GM's call: ask at
         task start if the request has not said (the AGENTS.md doctrine
