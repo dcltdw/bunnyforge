@@ -395,6 +395,68 @@ class WorkspaceStore:
                 "pending")
         return p.read_text(encoding="utf-8")
 
+    def promote_draft(self, path: str) -> str:
+        """Move one approved draft to its canonical location and commit.
+
+        The destination is derived by stripping the drafts prefix — slugs
+        made the two trees mirror. Order matters: every refusal fires
+        before the filesystem changes, so a refused promotion leaves the
+        draft exactly where it was."""
+        p = self._draft_path(path)
+        if not p.is_file():
+            raise StoreError(
+                f"no such draft: {path} — list_drafts shows what is "
+                "pending")
+        rel = p.relative_to(self.ws.root).as_posix()
+        inner = p.relative_to(self._drafts())
+        target = self.ws.root / inner
+        target_rel = inner.as_posix()
+        if target.is_file():
+            # A revision: its recorded base must still match canon. None
+            # (unrecorded) never equals a hash, so unverifiable shadows
+            # are refused too rather than silently applied.
+            base = self._load_bases().get(rel)
+            if base != hashlib.sha256(target.read_bytes()).hexdigest():
+                raise StoreError(
+                    f"{target_rel} changed since this revision was "
+                    "proposed (or its base is unrecorded) — read_entity "
+                    "the current file, merge with update_draft, then "
+                    "promote again")
+        probe = subprocess.run(
+            ["git", "-C", str(self.ws.root), "rev-parse",
+             "--is-inside-work-tree"], capture_output=True, text=True)
+        if probe.returncode != 0:
+            raise StoreError(
+                "promotion requires the workspace to be a git repository "
+                "— refusing to change canon without history")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        p.unlink()
+        bases = self._load_bases()
+        bases.pop(rel, None)
+        self._save_bases(bases)
+        # Add exactly what promotion touched to the index: the target,
+        # plus the removed draft and the manifest when git can see them
+        # (a never-tracked deleted path would fail `git add` as an
+        # unmatched pathspec).
+        bases_rel = self._bases_file().relative_to(self.ws.root).as_posix()
+        spec = [target_rel]
+        for cand in (rel, bases_rel):
+            tracked = subprocess.run(
+                ["git", "-C", str(self.ws.root), "ls-files", "--", cand],
+                capture_output=True, text=True).stdout.strip()
+            if tracked or (self.ws.root / cand).exists():
+                spec.append(cand)
+        for sub in (["add", "-A", "--"] + spec,
+                    ["commit", "-m", f"serve-mcp: promote {target_rel}"]):
+            done = subprocess.run(["git", "-C", str(self.ws.root)] + sub,
+                                  capture_output=True, text=True)
+            if done.returncode != 0:
+                raise StoreError(
+                    f"git {sub[0]} failed: "
+                    f"{done.stderr.strip() or done.stdout.strip()}")
+        return target_rel
+
     # -- inbound queue ------------------------------------------------------
     # The GM's inbound queue: material authored elsewhere, awaiting
     # extraction into proper entity files. Read-only here, and the tool

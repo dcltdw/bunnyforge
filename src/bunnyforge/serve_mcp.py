@@ -196,6 +196,16 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
             started with --allow-direct-edits."""
             return store.write_entity(path, content)
 
+        @server.tool()
+        def promote_draft(path: str) -> str:
+            """Move one draft the GM has just approved in this chat to its
+            canonical location (derived from the draft path) and commit
+            it. Only call this after the GM's explicit approval of that
+            specific draft. A stale revision is refused — merge with
+            update_draft first. Available only because this server was
+            started with --allow-direct-edits."""
+            return store.promote_draft(path)
+
     def _reader(path):
         def read() -> str:
             return path.read_text(encoding="utf-8")

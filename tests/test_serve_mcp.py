@@ -152,6 +152,8 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             store, allow_direct_edits=True).list_tools()}
         self.assertNotIn("write_entity", off)
         self.assertIn("write_entity", on)
+        self.assertNotIn("promote_draft", off)
+        self.assertIn("promote_draft", on)
 
     async def test_save_draft_lands_in_the_drafts_dir(self):
         store = scaffold(self)

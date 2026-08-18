@@ -675,3 +675,94 @@ class TestInbound(StoreCase):
         rows = _store.WorkspaceStore(ws).list_inbound()
         self.assertEqual(rows, [{"path": "_Inbox/idea.txt",
                                  "readable": True}])
+
+
+class TestPromoteDraft(StoreCase):
+    """The GM's in-chat approval is the gate; the flag gates the
+    capability per-run. The destination is derived — slugs made the
+    drafts tree mirror canon — so there is no dest parameter to get
+    wrong."""
+
+    def make_git_ws(self):
+        ws = self.make_ws()
+        for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                    ["config", "user.name", "t"], ["add", "-A"],
+                    ["commit", "-qm", "seed"]):
+            subprocess.run(["git", "-C", str(ws.root)] + cmd, check=True)
+        return ws
+
+    def _git(self, ws, *args) -> str:
+        return subprocess.run(["git", "-C", str(ws.root), *args],
+                              capture_output=True, text=True,
+                              check=True).stdout
+
+    def test_promotes_a_new_draft_and_commits(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.save_draft("Ideas", "Harbor Heist",
+                               "---\ntitle: Harbor Heist\n---\nplot\n")
+        out = store.promote_draft(rel)
+        self.assertEqual(out, "Ideas/harbor-heist.md")
+        self.assertIn("plot", (ws.root / out).read_text(encoding="utf-8"))
+        self.assertFalse((ws.root / rel).exists())
+        self.assertIn("serve-mcp: promote Ideas/harbor-heist.md",
+                      self._git(ws, "log", "-1", "--format=%s"))
+        self.assertEqual(self._git(ws, "status", "--porcelain").strip(), "")
+
+    def test_promotes_a_fresh_revision_and_clears_its_base(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.propose_revision("NPCs/kim-ha-eun.md", "improved text")
+        out = store.promote_draft(rel)
+        self.assertEqual(out, "NPCs/kim-ha-eun.md")
+        self.assertEqual((ws.root / out).read_text(encoding="utf-8"),
+                         "improved text")
+        self.assertFalse((ws.root / rel).exists())
+        bases = json.loads(
+            (ws.root / "_AgentDrafts" / ".proposal-bases.json")
+            .read_text(encoding="utf-8"))
+        self.assertEqual(bases, {})
+        self.assertEqual(self._git(ws, "status", "--porcelain").strip(), "")
+
+    def test_stale_revision_is_refused_not_applied(self):
+        # Promoting a stale shadow would revert the GM's interim edits,
+        # disguised inside an intended diff.
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.propose_revision("NPCs/kim-ha-eun.md", "proposal")
+        (ws.root / "NPCs/kim-ha-eun.md").write_text("GM edit",
+                                                    encoding="utf-8")
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.promote_draft(rel)
+        self.assertIn("update_draft", str(ctx.exception))
+        self.assertEqual(
+            (ws.root / "NPCs/kim-ha-eun.md").read_text(encoding="utf-8"),
+            "GM edit")  # canon untouched
+
+    def test_unrecorded_base_is_refused(self):
+        # Covers a hand-authored shadow AND a draft whose canonical
+        # counterpart appeared after it was saved: target exists, no base
+        # on record, so promotion cannot verify and refuses.
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        shadow = ws.root / "_AgentDrafts" / "NPCs"
+        shadow.mkdir(parents=True)
+        (shadow / "kim-ha-eun.md").write_text("hand-made", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            store.promote_draft("_AgentDrafts/NPCs/kim-ha-eun.md")
+
+    def test_refuses_outside_a_git_repo_before_touching_anything(self):
+        ws = self.make_ws()  # no git init
+        store = _store.WorkspaceStore(ws)
+        rel = store.save_draft("Ideas", "Heist", "plot")
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.promote_draft(rel)
+        self.assertIn("git", str(ctx.exception))
+        self.assertTrue((ws.root / rel).is_file())   # draft still there
+        self.assertFalse((ws.root / "Ideas/heist.md").exists())
+
+    def test_missing_draft_is_refused(self):
+        store = _store.WorkspaceStore(self.make_git_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.promote_draft("_AgentDrafts/Ideas/nothing.md")
+        self.assertIn("list_drafts", str(ctx.exception))
