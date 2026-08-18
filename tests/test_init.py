@@ -458,6 +458,17 @@ class TestWhatInitWrites(unittest.TestCase):
         # doc, so init leaves it to the author.
         self.assertFalse((_scaffold(self) / "reanchor.txt").exists())
 
+    def test_writes_the_campaign_doctrine_stub(self):
+        # The GM-owned half of the doctrine split (#32). It lands like the
+        # other root stubs -- authored, canonical=None -- because no packaged
+        # version of it may ever overwrite what a campaign writes there. That
+        # is the whole point: AGENTS.md becomes replaceable only once there is
+        # somewhere else for campaign-specific rules to live.
+        stub = _scaffold(self) / "campaign-doctrine.md"
+        self.assertTrue(stub.is_file())
+        self.assertEqual(stub.read_bytes(),
+                         init.packaged_bytes("root/campaign-doctrine.md"))
+
 
 class TestGeneratedConfig(unittest.TestCase):
     """The generated campaign.toml round-trips through _config.load, and every
