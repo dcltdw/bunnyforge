@@ -144,9 +144,10 @@ rather than assuming any particular layout.
 ## Reviewing the workspace
 
 `bunnyforge review checkup` runs the mechanical review suite (visibility audit,
-front-matter, wikilinks, compendium completeness, reveal-when). "Run the
-checkup" also walks the agent-judgment checklist in `checks/checkup.md`. Deferred
-tooling work is tracked in GitHub Issues (see `[[tickets]]`).
+front-matter, wikilinks, compendium completeness, reveal-when, name
+collisions). "Run the checkup" also walks the agent-judgment checklist in
+`checks/checkup.md`. Deferred tooling work is tracked in GitHub Issues (see
+`[[tickets]]`).
 
 ## Player visibility
 

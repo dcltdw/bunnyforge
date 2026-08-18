@@ -214,6 +214,20 @@ class TestConfigLoad(unittest.TestCase):
                     _config.load(self._ws(
                         MINIMAL + "\n[workspace]\n" + bad + "\n"))
 
+    def test_archive_dir_rejects_empty_and_path_escaping_values(self):
+        # archive_dir is the only one of these keys that opens a walk
+        # root; an empty string makes that root the workspace root itself
+        # (duplicating every file), and '/' or a dot-segment let it point
+        # somewhere other than one directory directly under the root.
+        for bad in ('archive_dir = ""',
+                    'archive_dir = "Sub/Archive"',
+                    'archive_dir = "."',
+                    'archive_dir = ".."'):
+            with self.subTest(bad=bad):
+                with self.assertRaises(_config.ConfigError):
+                    _config.load(self._ws(
+                        MINIMAL + "\n[workspace]\n" + bad + "\n"))
+
     def test_default_exclude_dirs_is_the_repo_infra_exemption(self):
         cfg = _config.load(self._ws(MINIMAL))
         # docs/scripts/tests plus the always-appended staging dirs; the

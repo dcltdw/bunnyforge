@@ -97,6 +97,25 @@ class TestEnumerator(unittest.TestCase):
                     for r in review._common.iter_content_files(ws)]
             self.assertEqual(rels, ["NPCs/mira-venn.md"])
 
+    def test_machinery_named_root_doc_is_not_walked(self):
+        # The root_docs loop used to bypass is_machinery entirely, so
+        # search() (which walks) and read_entity (which calls is_machinery
+        # directly) could disagree about a machinery-named root_docs entry.
+        # #62's whole thesis is that no two surfaces can disagree.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "campaign.toml": (
+                    '[campaign]\nnamespace = "t"\n\n[workspace]\n'
+                    'root_docs = ["_notes.md", "compendium.md"]\n'),
+                "_notes.md": "---\ntype: npc\n---\nsecret body",
+                "compendium.md": "# Compendium",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertNotIn("_notes.md", rels)
+            self.assertIn("compendium.md", rels)
+
     def test_git_internals_are_never_walked(self):
         # Previously guaranteed by MANDATORY_EXCLUDES; the .-prefix rule
         # owns it now. Guarded here because Task 2 deletes that frozenset.

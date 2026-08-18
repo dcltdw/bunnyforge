@@ -8,9 +8,9 @@ mutation testing. Neither was caught by a test, a review, or CI -- both
 were caught only by someone recomputing a number they had been told was
 correct.
 
-`_Export/`, `_Reviews/` and `_Ignore/` are all git-ignored, so `git status`
-stays clean after a leak into any of them. That is why this guard walks the
-filesystem rather than asking git.
+`_Export/`, `_Reviews/`, `_Sheets/` and `_Ignore/` are all git-ignored, so
+`git status` stays clean after a leak into any of them. That is why this
+guard walks the filesystem rather than asking git.
 """
 
 import contextlib

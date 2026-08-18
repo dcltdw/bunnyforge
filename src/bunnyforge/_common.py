@@ -150,6 +150,8 @@ def iter_content_files(ws: Workspace) -> list[FileRec]:
     workspace, config = ws.root, ws.config
 
     for name in config.root_docs:
+        if any(is_machinery(part) for part in Path(name).parts):
+            continue
         p = workspace / name
         if p.is_file():
             fm, body = split_front_matter(p.read_text(encoding="utf-8"))

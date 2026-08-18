@@ -341,6 +341,18 @@ def load(workspace: Path) -> Config:
                 "of its own (convention: a _-prefixed name)")
 
     archive_dir = _str(ws, "archive_dir")
+    if not archive_dir or "/" in archive_dir or archive_dir in (".", ".."):
+        # archive_dir opens a walk root (unlike the other defaultable
+        # dirs), so a shape that resolves outside "one directory directly
+        # under the workspace root" — empty, containing a separator, or a
+        # dot-segment — makes that root escape the intended shape. An
+        # empty string is the sharp one: it makes the walk root the
+        # workspace root itself, duplicating every other walk.
+        raise ConfigError(
+            f"{path}: workspace.archive_dir = {archive_dir!r} must name a "
+            "single directory directly under the workspace root — empty, "
+            "a path containing '/', or '.'/'..' would let the archive "
+            "walk escape that shape")
     if archive_dir in entity_dirs or archive_dir in inherit_dirs:
         raise ConfigError(
             f"{path}: workspace.archive_dir = {archive_dir!r} names a "

@@ -121,10 +121,28 @@ workspace root:
    has run.
 
 5. **Run `bunnyforge review checkup`.** Newly walked archive files may
-   produce front-matter findings, or `name-collisions` errors against
-   their live replacements (an archived file and its replacement sharing
-   a stem is now an error, not a silent ambiguity); fix or accept each —
-   that review is the archive joining canon.
+   produce front-matter findings — up to three per file (`type`, `canon`,
+   `visibility`), so a large archive can mean hundreds of findings.
+   `[[review.accepted]]` entries have no wildcards (all four keys
+   required, exact `file` match), so accepting each one individually does
+   not scale — backfilling front matter on the archived files is the
+   realistic path for most archives. `name-collisions` errors may also
+   appear: a stem shared between an archived file and a live one is now
+   an error, not a silent ambiguity, but not every collision involves the
+   archive — some are live-vs-live pairs that predate this migration
+   entirely. An acceptance entry names the alphabetically-first of the
+   two colliding paths, which for a live-vs-archive pair is the one under
+   `Archive/`. Fix or accept each — that review is the archive joining
+   canon.
+
+   The archive is now exported, too: `export-player` and `deploy-export`
+   walk it under the same visibility rules as everything else, so a
+   retired file with no `visibility` set defaults to `gm-only` and is
+   skipped — but a retired **player-visible** NPC republishes under a new
+   `ns:archive:...` wiki namespace, and its old `ns:npcs:...` page becomes
+   an orphan. Review the first `export-player` output and the
+   `deploy-export` dry run before `--go`, and check the `visibility` of
+   any `status: retired` file while you're in there.
 
 A workspace that skips this migration still works: old `_Archive/` is
 skipped by the prefix rule exactly as `exclude_dirs` skipped it before,

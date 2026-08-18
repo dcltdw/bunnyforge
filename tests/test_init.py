@@ -519,7 +519,7 @@ class TestGeneratedConfig(unittest.TestCase):
                 self.assertEqual(getattr(cfg, key),
                                  tuple(_config._DEFAULTS[key]))
         for key in ("briefs_dir", "sheets_dir", "perceptions_dir",
-                    "type_dirs"):
+                    "archive_dir", "type_dirs"):
             with self.subTest(key=key):
                 self.assertEqual(getattr(cfg, key), _config._DEFAULTS[key])
         self.assertEqual(
