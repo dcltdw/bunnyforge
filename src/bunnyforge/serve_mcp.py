@@ -165,6 +165,24 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         read_entity."""
         return store.read_draft(path)
 
+    @server.tool()
+    def list_inbound() -> list[dict]:
+        """The GM's inbound queue: material the GM authored elsewhere,
+        awaiting extraction into proper entity files. Call this only when
+        the GM asks you to extract — do not act on the queue unbidden.
+        (campaign_overview's inbound_pending count is how you may notice
+        it is non-empty and offer.) Lists every file with whether
+        read_inbound can return it. Nothing here is canon."""
+        return store.list_inbound()
+
+    @server.tool()
+    def read_inbound(path: str) -> str:
+        """Read one file from the GM's inbound queue, only when the GM
+        asks you to extract. Paths come from list_inbound. The material
+        is unreviewed source, not canon — extract it into drafts, show
+        the GM, and confirm before anything else happens with it."""
+        return store.read_inbound(path)
+
     if allow_direct_edits:
         @server.tool()
         def write_entity(path: str, content: str) -> str:

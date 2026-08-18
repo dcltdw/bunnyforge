@@ -539,3 +539,120 @@ class TestUpdateDraft(StoreCase):
         with self.assertRaises(_store.StoreError):
             _store.WorkspaceStore(ws).update_draft(
                 "_AgentDrafts/_Rejected/dead.md", "resurrect")
+
+
+class TestInbound(StoreCase):
+    """The GM's inbound queue. Read-only, and only when the GM asks: the
+    tool descriptions carry that contract; the store's job is that _Done/
+    (and any _-prefixed area) is unreachable and every live file is
+    honestly listed."""
+
+    def seed_queue(self, ws) -> Path:
+        q = ws.root / "_ExtractInbound"
+        (q / "notes").mkdir(parents=True)
+        (q / "notes" / "idea.txt").write_text(
+            "a harbor heist", encoding="utf-8")
+        (q / "page.html").write_text("<p>hi</p>", encoding="utf-8")
+        (q / "README.md").write_text("readme", encoding="utf-8")
+        (q / "scan.pdf").write_bytes(b"%PDF-1.4 not text")
+        done = q / "_Done"
+        done.mkdir()
+        (done / "spent.txt").write_text("processed", encoding="utf-8")
+        return q
+
+    def test_lists_every_live_file_marking_readability(self):
+        # ALL extensions are listed — a listing that hides files is the
+        # defect this redesign fixes (17 of 18 files were invisible). A
+        # PDF appears, honestly marked unreadable.
+        ws = self.make_ws()
+        self.seed_queue(ws)
+        self.assertEqual(_store.WorkspaceStore(ws).list_inbound(), [
+            {"path": "_ExtractInbound/README.md", "readable": True},
+            {"path": "_ExtractInbound/notes/idea.txt", "readable": True},
+            {"path": "_ExtractInbound/page.html", "readable": True},
+            {"path": "_ExtractInbound/scan.pdf", "readable": False},
+        ])
+
+    def test_done_is_never_listed(self):
+        # _Done/ holds processed source awaiting the GM's manual cleanup —
+        # never read, exactly like _Ignore/. Tested before _Done/ exists
+        # anywhere in the wild: this was the trap in the old rglob.
+        ws = self.make_ws()
+        self.seed_queue(ws)
+        paths = [r["path"] for r in _store.WorkspaceStore(ws).list_inbound()]
+        self.assertFalse(any("_Done" in p for p in paths))
+
+    def test_hidden_dot_files_are_skipped(self):
+        # .DS_Store and friends are machinery, not GM material; listing
+        # them would inflate inbound_pending and clutter every offer.
+        ws = self.make_ws()
+        q = self.seed_queue(ws)
+        (q / ".DS_Store").write_bytes(b"\x00")
+        paths = [r["path"] for r in _store.WorkspaceStore(ws).list_inbound()]
+        self.assertFalse(any(".DS_Store" in p for p in paths))
+
+    def test_no_queue_is_an_empty_list_not_an_error(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        self.assertEqual(store.list_inbound(), [])
+
+    def test_read_round_trips_text(self):
+        ws = self.make_ws()
+        self.seed_queue(ws)
+        store = _store.WorkspaceStore(ws)
+        self.assertEqual(
+            store.read_inbound("_ExtractInbound/notes/idea.txt"),
+            "a harbor heist")
+
+    def test_undecodable_bytes_are_replaced_not_a_crash(self):
+        # Inbound material is generated elsewhere; one stray latin-1 byte
+        # in a GM's .txt must not crash the tool.
+        ws = self.make_ws()
+        q = ws.root / "_ExtractInbound"
+        q.mkdir()
+        (q / "weird.txt").write_bytes(b"caf\xe9")
+        out = _store.WorkspaceStore(ws).read_inbound(
+            "_ExtractInbound/weird.txt")
+        self.assertEqual(out, "caf�")
+
+    def test_non_text_read_is_refused_with_the_convert_hint(self):
+        ws = self.make_ws()
+        self.seed_queue(ws)
+        with self.assertRaises(_store.StoreError) as ctx:
+            _store.WorkspaceStore(ws).read_inbound(
+                "_ExtractInbound/scan.pdf")
+        self.assertIn("convert", str(ctx.exception))
+
+    def test_done_read_is_refused(self):
+        ws = self.make_ws()
+        self.seed_queue(ws)
+        with self.assertRaises(_store.StoreError):
+            _store.WorkspaceStore(ws).read_inbound(
+                "_ExtractInbound/_Done/spent.txt")
+
+    def test_canonical_path_is_refused_naming_read_entity(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.read_inbound("NPCs/kim-ha-eun.md")
+        self.assertIn("read_entity", str(ctx.exception))
+
+    def test_escape_is_refused(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError):
+            store.read_inbound("_ExtractInbound/../../outside.md")
+
+    def test_missing_file_is_refused_naming_the_listing(self):
+        ws = self.make_ws()
+        (ws.root / "_ExtractInbound").mkdir()
+        with self.assertRaises(_store.StoreError) as ctx:
+            _store.WorkspaceStore(ws).read_inbound(
+                "_ExtractInbound/nothing.txt")
+        self.assertIn("list_inbound", str(ctx.exception))
+
+    def test_honours_configured_inbound_dir(self):
+        ws = self.make_ws('\n[workspace]\ninbound_dir = "_Inbox"\n')
+        q = ws.root / "_Inbox"
+        q.mkdir()
+        (q / "idea.txt").write_text("x", encoding="utf-8")
+        rows = _store.WorkspaceStore(ws).list_inbound()
+        self.assertEqual(rows, [{"path": "_Inbox/idea.txt",
+                                 "readable": True}])

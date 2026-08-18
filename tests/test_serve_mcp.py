@@ -215,6 +215,21 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         uris = {str(r.uri) for r in await server.list_resources()}
         self.assertNotIn("bunnyforge://doctrine/situation-design.md", uris)
 
+    async def test_inbound_tools_always_registered(self):
+        server = serve_mcp.build_server(scaffold(self))
+        names = {t.name for t in await server.list_tools()}
+        self.assertLessEqual({"list_inbound", "read_inbound"}, names)
+
+    async def test_inbound_descriptions_carry_the_contract(self):
+        # Regression: the old list_staged description said the opposite
+        # ("use it to pick up drafts"), actively nudging the agent to read
+        # the GM's queue unbidden. The contract phrase is load-bearing.
+        server = serve_mcp.build_server(scaffold(self))
+        descs = {t.name: (t.description or "")
+                 for t in await server.list_tools()}
+        for name in ("list_inbound", "read_inbound"):
+            self.assertIn("only when the GM asks", descs[name])
+
     async def test_streamable_app_is_asgi(self):
         server = serve_mcp.build_server(scaffold(self))
         self.assertTrue(callable(serve_mcp.build_app(server)))

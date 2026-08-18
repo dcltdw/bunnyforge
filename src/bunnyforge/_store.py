@@ -41,6 +41,8 @@ _DRAFT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _'-]*")
 
 BASES_NAME = ".proposal-bases.json"
 
+INBOUND_SUFFIXES = frozenset({".md", ".txt", ".html", ".htm"})
+
 
 def _slug(name: str) -> str:
     """A _DRAFT_NAME_RE-validated name, as a canon-style filename stem:
@@ -388,6 +390,77 @@ class WorkspaceStore:
                 f"no such draft: {path} — list_drafts shows what is "
                 "pending")
         return p.read_text(encoding="utf-8")
+
+    # -- inbound queue ------------------------------------------------------
+    # The GM's inbound queue: material authored elsewhere, awaiting
+    # extraction into proper entity files. Read-only here, and the tool
+    # descriptions add "only when the GM asks". _inbound_path is the shared
+    # resolver a future mark_extracted() reuses — a move tool is one new
+    # method, not a rewrite (its _Done/ destination would be constructed
+    # internally, not through this reader's resolver, which refuses
+    # _-prefixed components).
+
+    def _inbound(self) -> Path:
+        return self.ws.root / self.ws.config.inbound_dir
+
+    @staticmethod
+    def _machinery(parts: tuple[str, ...]) -> bool:
+        # _-prefixed: the workspace's machinery convention (_Done/,
+        # _Rejected/). .-prefixed: hidden files (.DS_Store) — never GM
+        # material, and listing them would inflate inbound_pending.
+        return any(part.startswith(("_", ".")) for part in parts)
+
+    def _inbound_path(self, path: str) -> Path:
+        root = self.ws.root
+        inbound = self._inbound()
+        p = (root / path).resolve()
+        if not p.is_relative_to(root):
+            raise StoreError(f"path escapes the workspace: {path}")
+        if not p.is_relative_to(inbound):
+            raise StoreError(
+                f"not an inbound path: {path} — read_inbound serves "
+                f"{self.ws.config.inbound_dir}/ only; canonical files are "
+                "read with read_entity")
+        if self._machinery(p.relative_to(inbound).parts):
+            raise StoreError(
+                f"{path} is in a processed or private area of the inbound "
+                "queue (_- or .-prefixed) and is never read — _Done/ holds "
+                "spent source awaiting the GM's cleanup")
+        return p
+
+    def list_inbound(self) -> list[dict]:
+        """Every live file in the GM's inbound queue, whatever its type:
+        workspace path, and whether read_inbound can return it. Sorted,
+        so two calls agree."""
+        inbound = self._inbound()
+        if not inbound.is_dir():
+            return []
+        out = []
+        for p in sorted(inbound.rglob("*")):
+            if not p.is_file():
+                continue
+            if self._machinery(p.relative_to(inbound).parts):
+                continue
+            out.append({
+                "path": p.relative_to(self.ws.root).as_posix(),
+                "readable": p.suffix.lower() in INBOUND_SUFFIXES})
+        return out
+
+    def read_inbound(self, path: str) -> str:
+        """Full text of one inbound file — the GM's unreviewed source
+        material, not canon. Decoding is forgiving (errors="replace"):
+        this material was generated outside the workspace."""
+        p = self._inbound_path(path)
+        if p.suffix.lower() not in INBOUND_SUFFIXES:
+            raise StoreError(
+                f"{path} is not a text format serve-mcp can return "
+                f"({', '.join(sorted(INBOUND_SUFFIXES))}) — ask the GM to "
+                "convert or summarize it")
+        if not p.is_file():
+            raise StoreError(
+                f"no such inbound file: {path} — list_inbound shows the "
+                "queue")
+        return p.read_text(encoding="utf-8", errors="replace")
 
     # -- write side ---------------------------------------------------------
 
