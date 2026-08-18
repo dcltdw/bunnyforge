@@ -136,7 +136,10 @@ def iter_content_files(ws: Workspace) -> list[FileRec]:
             for p in base.rglob("*.md"):
                 if p.name.lower() == "readme.md":
                     continue
-                if config.exclude_dirs & set(p.relative_to(workspace).parts):
+                parts = p.relative_to(workspace).parts
+                if config.exclude_dirs & set(parts):
+                    continue
+                if any(is_machinery(part) for part in parts):
                     continue
                 fm, body = split_front_matter(p.read_text(encoding="utf-8"))
                 recs.append(FileRec(p, fm, body, category))
@@ -165,6 +168,21 @@ def split_aliases(raw: str) -> list[str]:
     else:
         parts = _ALIAS_ITEM_RE.split(raw)
     return [p.strip().strip("'\"") for p in parts if p.strip().strip("'\"")]
+
+
+def is_machinery(part: str) -> bool:
+    """True if one path component is machinery by naming convention (#62):
+    _-prefixed (not canon -- _Ignore/, _Templates/, _AgentDrafts/, _Done/)
+    or .-prefixed (hidden machine files -- .git, .DS_Store,
+    .proposal-bases.json).
+
+    One definition, honoured by iter_content_files, the store's canon
+    resolver and both agent-facing families, and review's checks, so no
+    two surfaces can disagree about what counts. _config.py's archive_dir
+    validation inlines the same one-line test: _common imports _config,
+    so importing this from there would be circular.
+    """
+    return part.startswith(("_", "."))
 
 
 def aliases_for(rec: FileRec) -> set[str]:

@@ -82,6 +82,34 @@ class TestEnumerator(unittest.TestCase):
             self.assertIn("NPCs/mira-venn.md", by_path)
             self.assertNotIn("NPCs/_Archive/old.md", by_path)
 
+    def test_machinery_components_are_skipped_by_the_general_rule(self):
+        # #62: a leading _ means "not canon" wherever it appears. The rule
+        # itself keeps these out -- none of these names is in exclude_dirs.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "NPCs/_scratch/half-idea.md": "---\ntype: npc\n---\nx",
+                "NPCs/_notes.md": "not canon by name",
+                "NPCs/.hidden.md": "os droppings",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertEqual(rels, ["NPCs/mira-venn.md"])
+
+    def test_git_internals_are_never_walked(self):
+        # Previously guaranteed by MANDATORY_EXCLUDES; the .-prefix rule
+        # owns it now. Guarded here because Task 2 deletes that frozenset.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
+                "NPCs/.git/lost.md": "---\ntype: npc\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in review._common.iter_content_files(ws)]
+            self.assertEqual(rels, ["NPCs/mira-venn.md"])
+
     def test_records_sorted_by_path_regardless_of_creation_order(self):
         # Creation order deliberately scrambled — root doc first, "z" before
         # "a" within the same entity dir — and root/entity/inherit all
@@ -114,6 +142,16 @@ class TestEnumerator(unittest.TestCase):
             rec = _common.iter_content_files(ws)[0]
             self.assertEqual(rec.fm["visibility"], "player-visible")
             self.assertIn("text", rec.body)
+
+
+class TestIsMachinery(unittest.TestCase):
+    def test_prefixes(self):
+        for part, expect in [("_Ignore", True), (".git", True),
+                             ("_notes.md", True), (".DS_Store", True),
+                             ("NPCs", False), ("Archive", False),
+                             ("kim-ha-eun.md", False), ("a_b.md", False)]:
+            with self.subTest(part=part):
+                self.assertEqual(review._common.is_machinery(part), expect)
 
 
 class TestVisibilityAudit(unittest.TestCase):
