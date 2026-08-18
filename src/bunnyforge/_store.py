@@ -3,10 +3,10 @@
 _store.py — the workspace-access layer behind `bunnyforge serve-mcp`.
 
 Every MCP tool call touches the workspace through WorkspaceStore, so the
-path guards and the staging/canonical boundary have exactly one home. A
-remote agent's request is untrusted input: it names a path, and refusing
-the ones that escape the workspace or reach into excluded directories is
-this module's job, not the tool layer's.
+path guards and the drafts/inbound/canonical boundaries have exactly one
+home. A remote agent's request is untrusted input: it names a path, and
+refusing the ones that escape the workspace or reach into excluded
+directories is this module's job, not the tool layer's.
 
 Stdlib only, deliberately: the MCP SDK belongs to serve_mcp.py, and even
 there only inside function bodies — this module must import cleanly on a
@@ -19,6 +19,8 @@ belongs on the class, never in free functions serve_mcp.py calls directly.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import re
 import subprocess
@@ -36,6 +38,18 @@ NAME_COUNT_CAP = 50   # names per request; a brainstorm needs a handful, not a p
 # underscore (dot-files hide; the _-prefix is the workspace's own marker
 # for machinery directories).
 _DRAFT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _'-]*")
+
+BASES_NAME = ".proposal-bases.json"
+
+
+def _slug(name: str) -> str:
+    """A _DRAFT_NAME_RE-validated name, as a canon-style filename stem:
+    lowercase, separators to single hyphens, apostrophes dropped. Canon
+    files are kebab-case, and slugs are what let the drafts tree mirror
+    canon — which is what lets promotion derive its destination."""
+    s = name.lower().replace("'", "")
+    s = re.sub(r"[\s_]+", "-", s)
+    return re.sub(r"-+", "-", s).strip("-")
 
 
 class StoreError(Exception):
@@ -64,11 +78,10 @@ class WorkspaceStore:
         """Resolve a workspace-relative path, refusing escapes and excluded
         directories.
 
-        The staging directory is one of the excluded ones, so a draft written
-        there is not readable back through this method: the canon read tools
-        serve canon, and staged material is not canon until a human promotes
-        it. Staging has its own labelled door — read_staged, below — which
-        guards the inverse condition and reaches nothing else.
+        The drafts and inbound directories are among the excluded ones, so
+        neither is readable through this method: the canon read tools serve
+        canon. Each has its own labelled door — read_draft and read_inbound
+        — guarding the inverse condition.
         """
         root = self.ws.root
         p = (root / path).resolve()
@@ -201,90 +214,166 @@ class WorkspaceStore:
                 "places": [_names.place_name(rng, inv, key)
                            for _ in range(count)]}
 
-    # -- staging ------------------------------------------------------------
+    # -- agent drafts -------------------------------------------------------
+    # The agents' outbox: drafts and proposed revisions awaiting GM review.
+    # Excluded from the canon reads BY DESIGN (config auto-excludes it), so
+    # it has its own labelled doors. _draft_path guards the inverse of
+    # _canonical() — inside the drafts directory rather than outside it —
+    # so these methods cannot be talked into serving canon. Underscore
+    # components are machinery (the workspace's own convention): a draft
+    # the GM moves to _Rejected/ is never listed or read again.
 
-    def _staging(self) -> Path:
-        return self.ws.root / self.ws.config.inbound_dir
+    def _drafts(self) -> Path:
+        return self.ws.root / self.ws.config.drafts_dir
 
-    # Reading staging back is the agent's own inbox, not a second door into
-    # canon: these two are the only way in, they reach nothing else, and the
-    # tool docstrings say the material is unreviewed. read_staged's guard is
-    # the exact inverse of _canonical() -- inside the staging directory
-    # rather than outside it -- so it cannot be talked into serving canon.
-    # Its messages name the TOOL the agent can call next, which is what it
-    # can act on; list_staging is what the tool layer registers as that.
+    def _draftable_sections(self) -> tuple[str, ...]:
+        # The perception record is by contract never agent-authored.
+        return tuple(s for s in self._sections()
+                     if s != self.ws.config.perceptions_dir)
 
-    def list_staging(self) -> list[dict]:
-        """Every staged markdown file: its workspace path and what it is.
+    def _slugged(self, raw: str, label: str) -> str:
+        if not _DRAFT_NAME_RE.fullmatch(raw):
+            raise StoreError(
+                f"bad {label} name {raw!r} — letters, digits, spaces, "
+                "- _ ' only, starting with a letter or digit")
+        return _slug(raw)
 
-        "revision" means the mirrored canonical file exists, so the GM reads
-        it as a diff; "draft" means new content with nothing to compare
-        against. Sorted, so two calls agree.
-        """
-        staging = self._staging()
-        out = []
-        for p in sorted(staging.rglob("*.md")):
-            if not p.is_file():
-                continue
-            mirrored = self.ws.root / p.relative_to(staging)
-            out.append({"path": p.relative_to(self.ws.root).as_posix(),
-                        "kind": "revision" if mirrored.is_file() else "draft"})
-        return out
-
-    def read_staged(self, path: str) -> str:
-        """Full text of one staged file — unreviewed material, not canon."""
+    def _draft_path(self, path: str) -> Path:
         root = self.ws.root
-        staging = self._staging()
+        drafts = self._drafts()
         p = (root / path).resolve()
         if not p.is_relative_to(root):
             raise StoreError(f"path escapes the workspace: {path}")
-        if not p.is_relative_to(staging):
+        if not p.is_relative_to(drafts):
             raise StoreError(
-                f"not a staged path: {path} — read_staged serves "
-                f"{self.ws.config.inbound_dir}/ only; canonical files are "
+                f"not a draft path: {path} — this tool serves "
+                f"{self.ws.config.drafts_dir}/ only; canonical files are "
                 "read with read_entity")
+        if any(part.startswith("_")
+               for part in p.relative_to(drafts).parts):
+            raise StoreError(
+                f"{path} is in a _-prefixed area of the drafts directory "
+                "(the GM's machinery, e.g. _Rejected/) and is never served")
         if p.suffix != ".md":
             raise StoreError(
-                f"not a staged markdown file: {path} — staging holds .md "
-                "drafts and revisions")
-        if not p.is_file():
-            raise StoreError(
-                f"no such staged file: {path} — list_staged shows what is "
-                "currently staged")
-        return p.read_text(encoding="utf-8")
+                f"not a draft markdown file: {path} — drafts are .md only")
+        return p
 
-    # -- write side ---------------------------------------------------------
-    # Staging paths are built directly rather than through _canonical: the
-    # staging directory is excluded from the canon reads BY DESIGN, and these
-    # two methods are the only writers. Traversal is impossible by
-    # construction -- section is validated against config, and _DRAFT_NAME_RE
-    # admits no separator.
+    # The base manifest: workspace-relative shadow path -> SHA-256 of the
+    # canonical file at proposal time. A provenance cache, not a lock file:
+    # missing or unparseable reads as empty, and every save prunes entries
+    # whose shadow is gone.
 
-    def stage_draft(self, section: str, name: str, content: str) -> str:
-        self._check_section(section)
-        if not _DRAFT_NAME_RE.fullmatch(name):
+    def _bases_file(self) -> Path:
+        return self._drafts() / BASES_NAME
+
+    def _load_bases(self) -> dict[str, str]:
+        try:
+            raw = json.loads(self._bases_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {k: v for k, v in raw.items()
+                if isinstance(k, str) and isinstance(v, str)}
+
+    def _save_bases(self, bases: dict[str, str]) -> None:
+        live = {k: v for k, v in bases.items()
+                if (self.ws.root / k).is_file()}
+        f = self._bases_file()
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(live, indent=2, sort_keys=True) + "\n",
+                     encoding="utf-8")
+
+    def _set_base(self, shadow_rel: str, canon: Path) -> None:
+        bases = self._load_bases()
+        bases[shadow_rel] = hashlib.sha256(canon.read_bytes()).hexdigest()
+        self._save_bases(bases)
+
+    def save_draft(self, section: str, name: str, content: str,
+                   subdir: str | None = None) -> str:
+        if section not in self._draftable_sections():
             raise StoreError(
-                f"bad draft name {name!r} — letters, digits, spaces, "
-                "- _ ' only, starting with a letter or digit")
-        dest = self._staging() / section / f"{name}.md"
+                f"unknown or undraftable section {section!r} — one of: "
+                + ", ".join(self._draftable_sections()))
+        rel = Path(section)
+        if subdir is not None:
+            rel = rel / self._slugged(subdir, "subdir")
+        rel = rel / f"{self._slugged(name, 'draft')}.md"
+        if (self.ws.root / rel).is_file():
+            raise StoreError(
+                f"{rel.as_posix()} already exists in canon — use "
+                "propose_revision to suggest changes to it, or pick "
+                "another name")
+        dest = self._drafts() / rel
         if dest.exists():
-            rel = dest.relative_to(self.ws.root).as_posix()
-            raise StoreError(f"{rel} already exists — pick another name")
+            drel = dest.relative_to(self.ws.root).as_posix()
+            raise StoreError(
+                f"{drel} already exists — read_draft it and revise with "
+                "update_draft, or pick another name")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
         return dest.relative_to(self.ws.root).as_posix()
 
-    def stage_revision(self, path: str, content: str) -> str:
+    def propose_revision(self, path: str, content: str) -> str:
         target = self._canonical(path)
         if not target.is_file() or target.suffix != ".md":
             raise StoreError(
-                f"no such content file: {path} — stage_revision proposes "
-                "changes to an existing file; use stage_draft for new "
+                f"no such content file: {path} — propose_revision proposes "
+                "changes to an existing file; use save_draft for new "
                 "content")
-        dest = self._staging() / target.relative_to(self.ws.root)
+        dest = self._drafts() / target.relative_to(self.ws.root)
+        rel = dest.relative_to(self.ws.root).as_posix()
+        if dest.exists():
+            raise StoreError(
+                f"a pending proposal already exists at {rel} — read_draft "
+                "it, merge your changes into it, then update_draft")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")  # latest proposal wins
-        return dest.relative_to(self.ws.root).as_posix()
+        dest.write_text(content, encoding="utf-8")
+        self._set_base(rel, target)
+        return rel
+
+    def list_drafts(self) -> list[dict]:
+        """Every pending draft: path, kind ("new" content or a "revision"
+        of an existing file), title and summary from front matter, and —
+        for revisions — whether canon changed since it was proposed.
+        Sorted, so two calls agree."""
+        drafts = self._drafts()
+        bases = self._load_bases()
+        out = []
+        for p in sorted(drafts.rglob("*.md")):
+            if not p.is_file():
+                continue
+            inner = p.relative_to(drafts)
+            if any(part.startswith("_") for part in inner.parts):
+                continue
+            rel = p.relative_to(self.ws.root).as_posix()
+            fm, _body = _common.split_front_matter(
+                p.read_text(encoding="utf-8"))
+            mirrored = self.ws.root / inner
+            row = {"path": rel,
+                   "kind": "revision" if mirrored.is_file() else "new",
+                   "title": fm.get("title") or p.stem,
+                   "summary": fm.get("summary", "")}
+            if row["kind"] == "revision":
+                base = bases.get(rel)
+                row["stale"] = (None if base is None else
+                                hashlib.sha256(mirrored.read_bytes())
+                                .hexdigest() != base)
+            out.append(row)
+        return out
+
+    def read_draft(self, path: str) -> str:
+        """Full text of one pending draft — unreviewed material, not
+        canon."""
+        p = self._draft_path(path)
+        if not p.is_file():
+            raise StoreError(
+                f"no such draft: {path} — list_drafts shows what is "
+                "pending")
+        return p.read_text(encoding="utf-8")
+
+    # -- write side ---------------------------------------------------------
 
     def write_entity(self, path: str, content: str) -> str:
         target = self._canonical(path)

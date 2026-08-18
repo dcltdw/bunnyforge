@@ -120,37 +120,41 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         return store.generate_names(culture, count)
 
     @server.tool()
-    def save_draft(section: str, name: str, content: str) -> str:
-        """Stage NEW content (a full markdown file, front matter included)
-        into the workspace's staging area for the GM to review and promote.
-        Never overwrites; returns the staged path."""
-        return store.stage_draft(section, name, content)
+    def save_draft(section: str, name: str, content: str,
+                   subdir: str | None = None) -> str:
+        """Draft NEW content (a full markdown file, front matter included)
+        into your drafts directory for the GM to review and promote. The
+        name is slugged to kebab-case (put the display title in front
+        matter); subdir nests one level, e.g. section="Briefs",
+        subdir="session-015". Never overwrites — revise existing drafts
+        with update_draft. Returns the draft's path."""
+        return store.save_draft(section, name, content, subdir)
 
     @server.tool()
     def propose_revision(path: str, content: str) -> str:
-        """Stage a full-file revision of an EXISTING workspace file as a
-        shadow copy in the staging area. The GM reviews it as a diff.
-        Re-proposing replaces the earlier proposal; returns the staged
-        path."""
-        return store.stage_revision(path, content)
+        """Propose a full-file revision of an EXISTING canonical file, as
+        a shadow copy in your drafts directory; the GM reviews it as a
+        diff. One pending proposal per file: if one exists, read_draft it,
+        merge, and update_draft instead. Returns the draft's path."""
+        return store.propose_revision(path, content)
 
     @server.tool()
-    def list_staged() -> list[dict]:
-        """List everything you have staged and not yet had promoted: each
-        path, and whether it is a "draft" (new content) or a "revision" (a
-        proposed rewrite of an existing file). This is your own inbox, NOT
-        canon — nothing here has been reviewed, and it may never be. Use it
-        to pick up drafts from an earlier session instead of starting them
-        again."""
-        return store.list_staging()
+    def list_drafts() -> list[dict]:
+        """List your own unpromoted drafts from this and earlier sessions:
+        path, kind ("new" content or a "revision" of an existing file),
+        title and summary, and for revisions whether canon has changed
+        underneath them (stale). Nothing here is canon — it is your
+        unreviewed work awaiting the GM. Pick a draft up and merge rather
+        than writing it again."""
+        return store.list_drafts()
 
     @server.tool()
-    def read_staged(path: str) -> str:
-        """Read one staged file in full. Paths come from list_staged.
-        Staged material is UNREVIEWED and is not canon — do not treat it as
-        established fact about the campaign; read it to revisit or merge
-        your own earlier drafts. For canonical files, use read_entity."""
-        return store.read_staged(path)
+    def read_draft(path: str) -> str:
+        """Read one of your pending drafts in full. Paths come from
+        list_drafts. Draft material is UNREVIEWED and not canon — do not
+        treat it as established fact. For canonical files, use
+        read_entity."""
+        return store.read_draft(path)
 
     if allow_direct_edits:
         @server.tool()

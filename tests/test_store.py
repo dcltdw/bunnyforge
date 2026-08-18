@@ -1,3 +1,5 @@
+import hashlib
+import json
 import subprocess
 import tempfile
 import unittest
@@ -113,13 +115,13 @@ class TestReadEntity(StoreCase):
             store.read_entity("/etc/hosts")
 
     def test_excluded_dir_is_refused(self):
-        # The staging directory is excluded by default, so drafts written
-        # there are not readable back through read_entity: it serves canon.
-        # Staging is reached through read_staged instead (TestStagingReads).
+        # The inbound directory is excluded by default, so material dropped
+        # there is not readable back through read_entity: it serves canon.
+        # (The drafts directory has the same boundary; see TestDraftReads.)
         ws = self.make_ws()
-        staged = ws.root / "_ExtractInbound"
-        staged.mkdir()
-        (staged / "secret.md").write_text("staged", encoding="utf-8")
+        dropped = ws.root / "_ExtractInbound"
+        dropped.mkdir()
+        (dropped / "secret.md").write_text("dropped", encoding="utf-8")
         store = _store.WorkspaceStore(ws)
         with self.assertRaises(_store.StoreError):
             store.read_entity("_ExtractInbound/secret.md")
@@ -232,138 +234,223 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestStageDraft(StoreCase):
-    def test_writes_into_staging_and_creates_dirs(self):
+class TestSaveDraft(StoreCase):
+    def test_writes_into_drafts_and_slugs_the_name(self):
         ws = self.make_ws()
         store = _store.WorkspaceStore(ws)
-        rel = store.stage_draft("NPCs", "Old Man Cho", "---\ntitle: Cho\n---\n")
-        self.assertEqual(rel, "_ExtractInbound/NPCs/Old Man Cho.md")
+        rel = store.save_draft("NPCs", "Old Man Cho", "---\ntitle: Cho\n---\n")
+        self.assertEqual(rel, "_AgentDrafts/NPCs/old-man-cho.md")
         self.assertTrue((ws.root / rel).is_file())
 
-    def test_refuses_overwrite(self):
+    def test_slug_drops_apostrophes_and_collapses_separators(self):
         store = _store.WorkspaceStore(self.make_ws())
-        store.stage_draft("NPCs", "Cho", "x")
+        rel = store.save_draft("NPCs", "Mara's  Old_Friend", "x")
+        self.assertEqual(rel, "_AgentDrafts/NPCs/maras-old-friend.md")
+
+    def test_subdir_nests_one_level_and_is_slugged(self):
+        # Briefs live at Briefs/session-NNN/<name>.md; a draft brief must be
+        # able to take its canonical shape, or every promotion re-nests by
+        # hand.
+        ws = self.make_ws()
+        rel = _store.WorkspaceStore(ws).save_draft(
+            "Briefs", "Kim Ha-eun", "x", subdir="Session 15")
+        self.assertEqual(rel, "_AgentDrafts/Briefs/session-15/kim-ha-eun.md")
+
+    def test_existing_draft_refusal_names_update_draft(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        store.save_draft("NPCs", "Cho", "x")
         with self.assertRaises(_store.StoreError) as ctx:
-            store.stage_draft("NPCs", "Cho", "y")
-        self.assertIn("another name", str(ctx.exception))
+            store.save_draft("NPCs", "Cho", "y")
+        self.assertIn("update_draft", str(ctx.exception))
+
+    def test_canonical_collision_refusal_names_propose_revision(self):
+        # A new draft shadowing an existing canonical file would be
+        # misreported as a revision and reviewed as a diff against the
+        # wrong entity.
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.save_draft("NPCs", "Kim Ha-eun", "x")  # slug: kim-ha-eun
+        self.assertIn("propose_revision", str(ctx.exception))
 
     def test_refuses_unknown_section_and_bad_names(self):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError):
-            store.stage_draft("Nope", "Cho", "x")
+            store.save_draft("Nope", "Cho", "x")
         for bad in ("../escape", "a/b", ".hidden", "_underscore"):
             with self.assertRaises(_store.StoreError):
-                store.stage_draft("NPCs", bad, "x")
+                store.save_draft("NPCs", bad, "x")
+            with self.assertRaises(_store.StoreError):
+                store.save_draft("NPCs", "Cho", "x", subdir=bad)
 
-    def test_honors_configured_staging_dir(self):
-        ws = self.make_ws('\n[workspace]\ninbound_dir = "_Inbox"\n')
-        rel = _store.WorkspaceStore(ws).stage_draft("NPCs", "Cho", "x")
-        self.assertEqual(rel, "_Inbox/NPCs/Cho.md")
-
-
-class TestStageRevision(StoreCase):
-    def test_shadow_mirrors_the_canonical_path(self):
-        ws = self.make_ws()
-        store = _store.WorkspaceStore(ws)
-        rel = store.stage_revision("NPCs/kim-ha-eun.md", "new text")
-        self.assertEqual(rel, "_ExtractInbound/NPCs/kim-ha-eun.md")
-        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"),
-                         "new text")
-
-    def test_latest_proposal_wins(self):
-        ws = self.make_ws()
-        store = _store.WorkspaceStore(ws)
-        store.stage_revision("NPCs/kim-ha-eun.md", "first")
-        rel = store.stage_revision("NPCs/kim-ha-eun.md", "second")
-        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"),
-                         "second")
-
-    def test_requires_an_existing_target(self):
+    def test_perceptions_are_not_draftable(self):
+        # The perception record is by contract never agent-authored.
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError) as ctx:
-            store.stage_revision("NPCs/nobody.md", "x")
-        self.assertIn("stage_draft", str(ctx.exception))  # points at the fix
+            store.save_draft("Perceptions", "Cho", "x")
+        listed = str(ctx.exception).split("one of:")[1]
+        self.assertNotIn("Perceptions", listed)
+        self.assertIn("Briefs", listed)
+
+    def test_honours_configured_drafts_dir(self):
+        ws = self.make_ws('\n[workspace]\ndrafts_dir = "_Outbox"\n')
+        rel = _store.WorkspaceStore(ws).save_draft("NPCs", "Cho", "x")
+        self.assertEqual(rel, "_Outbox/NPCs/cho.md")
+
+
+class TestProposeRevision(StoreCase):
+    def test_shadow_mirrors_the_canonical_path_and_records_a_base(self):
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.propose_revision("NPCs/kim-ha-eun.md", "new text")
+        self.assertEqual(rel, "_AgentDrafts/NPCs/kim-ha-eun.md")
+        self.assertEqual((ws.root / rel).read_text(encoding="utf-8"),
+                         "new text")
+        bases = json.loads(
+            (ws.root / "_AgentDrafts" / ".proposal-bases.json")
+            .read_text(encoding="utf-8"))
+        canon_hash = hashlib.sha256(
+            (ws.root / "NPCs/kim-ha-eun.md").read_bytes()).hexdigest()
+        self.assertEqual(bases[rel], canon_hash)
+
+    def test_second_proposal_is_refused_and_the_first_survives(self):
+        # The old latest-wins rule silently destroyed pending proposals —
+        # routine, not rare: the end-of-session ritual proposes front-burner
+        # updates every session.
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.propose_revision("NPCs/kim-ha-eun.md", "first")
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.propose_revision("NPCs/kim-ha-eun.md", "second")
+        self.assertIn("update_draft", str(ctx.exception))
+        self.assertEqual(
+            (ws.root / "_AgentDrafts/NPCs/kim-ha-eun.md")
+            .read_text(encoding="utf-8"), "first")
+
+    def test_requires_an_existing_target_naming_save_draft(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.propose_revision("NPCs/nobody.md", "x")
+        self.assertIn("save_draft", str(ctx.exception))
 
     def test_refuses_escapes(self):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError):
-            store.stage_revision("../outside.md", "x")
+            store.propose_revision("../outside.md", "x")
 
 
-class TestStagingReads(StoreCase):
-    """The agent's own inbox. Staging stays invisible to the canon read
-    tools; these two methods are the one labelled way back in, so that a
-    draft written last session can be revisited rather than re-invented.
-    """
+class TestDraftReads(StoreCase):
+    """The agents' own outbox: freely readable, so a draft written last
+    session is revisited rather than re-invented."""
 
-    def test_listing_distinguishes_a_draft_from_a_revision(self):
-        store = _store.WorkspaceStore(self.make_ws())
-        store.stage_draft("NPCs", "Cho", "x")
-        store.stage_revision("NPCs/kim-ha-eun.md", "y")
-        found = {e["path"]: e["kind"] for e in store.list_staging()}
-        self.assertEqual(found, {
-            "_ExtractInbound/NPCs/Cho.md": "draft",
-            "_ExtractInbound/NPCs/kim-ha-eun.md": "revision",
-        })
-
-    def test_nothing_staged_is_an_empty_list_not_an_error(self):
-        # The staging directory does not exist until something is staged.
-        store = _store.WorkspaceStore(self.make_ws())
-        self.assertEqual(store.list_staging(), [])
-
-    def test_listing_ignores_non_markdown(self):
+    def test_listing_reports_kind_title_and_summary(self):
         ws = self.make_ws()
         store = _store.WorkspaceStore(ws)
-        store.stage_draft("NPCs", "Cho", "x")
-        (ws.root / "_ExtractInbound" / "notes.txt").write_text(
-            "scratch", encoding="utf-8")
-        self.assertEqual([e["path"] for e in store.list_staging()],
-                         ["_ExtractInbound/NPCs/Cho.md"])
+        store.save_draft("NPCs", "Cho",
+                         "---\ntitle: Old Man Cho\n"
+                         "summary: A dockside fixer.\n---\nbody\n")
+        store.propose_revision("NPCs/kim-ha-eun.md", "y")
+        rows = {r["path"]: r for r in store.list_drafts()}
+        cho = rows["_AgentDrafts/NPCs/cho.md"]
+        self.assertEqual(cho["kind"], "new")
+        self.assertEqual(cho["title"], "Old Man Cho")
+        self.assertEqual(cho["summary"], "A dockside fixer.")
+        self.assertNotIn("stale", cho)          # stale is revision-only
+        rev = rows["_AgentDrafts/NPCs/kim-ha-eun.md"]
+        self.assertEqual(rev["kind"], "revision")
+        self.assertIs(rev["stale"], False)
 
-    def test_listing_honors_a_configured_staging_dir(self):
-        ws = self.make_ws('\n[workspace]\ninbound_dir = "_Inbox"\n')
+    def test_title_falls_back_to_the_stem(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        store.save_draft("NPCs", "Cho", "no front matter\n")
+        [row] = store.list_drafts()
+        self.assertEqual(row["title"], "cho")
+        self.assertEqual(row["summary"], "")
+
+    def test_revision_goes_stale_when_canon_moves(self):
+        # A pending shadow must not silently revert the GM's interim edits;
+        # stale is how the listing warns, and promote_draft later refuses.
+        ws = self.make_ws()
         store = _store.WorkspaceStore(ws)
-        store.stage_draft("NPCs", "Cho", "x")
-        self.assertEqual([e["path"] for e in store.list_staging()],
-                         ["_Inbox/NPCs/Cho.md"])
+        store.propose_revision("NPCs/kim-ha-eun.md", "proposal")
+        (ws.root / "NPCs/kim-ha-eun.md").write_text("GM edit",
+                                                    encoding="utf-8")
+        [row] = store.list_drafts()
+        self.assertIs(row["stale"], True)
 
-    def test_read_round_trips_a_staged_file(self):
+    def test_unrecorded_base_reports_stale_none(self):
+        ws = self.make_ws()
+        shadow = ws.root / "_AgentDrafts" / "NPCs"
+        shadow.mkdir(parents=True)
+        (shadow / "kim-ha-eun.md").write_text("hand-made", encoding="utf-8")
+        [row] = _store.WorkspaceStore(ws).list_drafts()
+        self.assertIsNone(row["stale"])
+
+    def test_corrupt_manifest_reads_as_empty_not_an_error(self):
+        # The manifest is a provenance cache, not a lock file.
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.propose_revision("NPCs/kim-ha-eun.md", "proposal")
+        (ws.root / "_AgentDrafts" / ".proposal-bases.json").write_text(
+            "not json", encoding="utf-8")
+        [row] = store.list_drafts()
+        self.assertIsNone(row["stale"])
+
+    def test_listing_skips_underscore_components(self):
+        # _AgentDrafts/_Rejected/ is the GM's rejection signal — never
+        # listed, so rejected material cannot be resurrected by resume.
+        ws = self.make_ws()
+        store = _store.WorkspaceStore(ws)
+        store.save_draft("NPCs", "Cho", "x")
+        rejected = ws.root / "_AgentDrafts" / "_Rejected"
+        rejected.mkdir(parents=True)
+        (rejected / "dead.md").write_text("x", encoding="utf-8")
+        self.assertEqual([r["path"] for r in store.list_drafts()],
+                         ["_AgentDrafts/NPCs/cho.md"])
+
+    def test_nothing_drafted_is_an_empty_list_not_an_error(self):
         store = _store.WorkspaceStore(self.make_ws())
-        rel = store.stage_draft("NPCs", "Cho", "---\ntitle: Cho\n---\nbody\n")
-        self.assertEqual(store.read_staged(rel),
-                         "---\ntitle: Cho\n---\nbody\n")
+        self.assertEqual(store.list_drafts(), [])
 
-    def test_escape_is_refused(self):
+    def test_read_round_trips_a_draft(self):
+        store = _store.WorkspaceStore(self.make_ws())
+        rel = store.save_draft("NPCs", "Cho", "---\ntitle: Cho\n---\nbody\n")
+        self.assertEqual(store.read_draft(rel), "---\ntitle: Cho\n---\nbody\n")
+
+    def test_escape_and_absolute_paths_are_refused(self):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError):
-            store.read_staged("_ExtractInbound/../../outside.md")
-
-    def test_absolute_path_outside_the_workspace_is_refused(self):
-        store = _store.WorkspaceStore(self.make_ws())
+            store.read_draft("_AgentDrafts/../../outside.md")
         with self.assertRaises(_store.StoreError):
-            store.read_staged("/etc/hosts")
+            store.read_draft("/etc/hosts")
 
     def test_a_canonical_path_is_refused_and_points_at_read_entity(self):
-        # The inverse guard: read_staged serves staging and nothing else, so
-        # canon reaches the agent through one method only.
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError) as ctx:
-            store.read_staged("NPCs/kim-ha-eun.md")
+            store.read_draft("NPCs/kim-ha-eun.md")
         self.assertIn("read_entity", str(ctx.exception))
 
-    def test_missing_file_is_refused_pointing_at_the_listing(self):
+    def test_an_underscore_component_is_refused(self):
+        ws = self.make_ws()
+        rejected = ws.root / "_AgentDrafts" / "_Rejected"
+        rejected.mkdir(parents=True)
+        (rejected / "dead.md").write_text("x", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            _store.WorkspaceStore(ws).read_draft(
+                "_AgentDrafts/_Rejected/dead.md")
+
+    def test_missing_draft_is_refused_pointing_at_the_listing(self):
         store = _store.WorkspaceStore(self.make_ws())
         with self.assertRaises(_store.StoreError) as ctx:
-            store.read_staged("_ExtractInbound/NPCs/nobody.md")
-        self.assertIn("list_staged", str(ctx.exception))
+            store.read_draft("_AgentDrafts/NPCs/nobody.md")
+        self.assertIn("list_drafts", str(ctx.exception))
 
-    def test_a_non_markdown_staged_file_is_refused(self):
-        ws = self.make_ws()
-        (ws.root / "_ExtractInbound").mkdir()
-        (ws.root / "_ExtractInbound" / "notes.txt").write_text(
-            "scratch", encoding="utf-8")
+    def test_canon_tools_refuse_draft_paths(self):
+        # The inverse boundary: _AgentDrafts is auto-excluded, so the
+        # canon read door must refuse it exactly as it refuses _Ignore/.
+        store = _store.WorkspaceStore(self.make_ws())
+        rel = store.save_draft("NPCs", "Cho", "x")
         with self.assertRaises(_store.StoreError):
-            _store.WorkspaceStore(ws).read_staged("_ExtractInbound/notes.txt")
+            store.read_entity(rel)
 
 
 class TestWriteEntity(StoreCase):
