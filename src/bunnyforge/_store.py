@@ -454,7 +454,11 @@ class WorkspaceStore:
             if done.returncode != 0:
                 raise StoreError(
                     f"git {sub[0]} failed: "
-                    f"{done.stderr.strip() or done.stdout.strip()}")
+                    f"{done.stderr.strip() or done.stdout.strip()} — "
+                    f"{target_rel} holds the promoted content, written but "
+                    "NOT committed, and the draft was removed; commit or "
+                    "inspect it by hand (do not discard it) before "
+                    "retrying")
         return target_rel
 
     # -- inbound queue ------------------------------------------------------
