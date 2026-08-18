@@ -62,3 +62,56 @@ campaign-specific rules written into `AGENTS.md` itself. Five steps, once:
 
 Step 5 is the point of the whole exercise. An allowlisted file is an
 unguarded file, and `AGENTS.md` is the one you least want unguarded.
+
+## Migrating to the not-canon underscore
+
+Workspaces scaffolded before the underscore convention was defined carry
+the old names: an excluded `_Archive/`, and generated output written to
+bare `Sheets/`, `Reviews/`, `Export/`. Five steps, once, from the
+workspace root:
+
+1. **Make the archive canon.** `git mv _Archive Archive`, then restructure
+   its contents to mirror sections (`Archive/NPCs/...`) where they do not
+   already — an archived file outside any mirrored section is still walked
+   and validated, just not held to the compendium-index obligation its
+   section would apply. If you would rather keep a different top-level
+   name, set `workspace.archive_dir` in `campaign.toml` instead of
+   renaming to `Archive`; it can be anything except a `_`- or
+   `.`-prefixed name, which the loader refuses outright, because that
+   would exclude the archive from every walk.
+
+2. **Mark the generated output.** For each of `Sheets`, `Reviews`, `Export`
+   that exists: `git mv Sheets _Sheets` (and likewise) — or simply delete
+   them; all three are rebuilt by the tools.
+
+3. **Update `campaign.toml`** if it sets these keys explicitly:
+   `sheets_dir` becomes `"_Sheets"`, and `exclude_dirs` drops `_Ignore`,
+   `_Archive`, `_Templates`, `Sheets`, and `Reviews` — `_Ignore` and
+   `_Templates` are the prefix rule's job now, `_Archive`'s old entry is
+   subsumed by the new `archive_dir` walk (step 1), and `Sheets`/`Reviews`
+   were redundant even before this: content directories are walked by an
+   explicit allowlist, and neither was ever on it. Keep `docs`, `scripts`,
+   `tests`, and any campaign-specific entries — that trio is now the
+   packaged default for `exclude_dirs`, so an unmodified list can be
+   deleted from `campaign.toml` entirely.
+
+4. **Take the packaged `AGENTS.md` whole** (see "Adopting a new version"
+   above), and merge the new ignore lines from the packaged `.gitignore`
+   (`_Sheets/`, `_Reviews/`, `_Export/`) into yours — add them alongside
+   whatever your workspace already ignores, rather than overwriting the
+   file, since unlike `AGENTS.md` your `.gitignore` is not package-owned
+   and may carry entries of your own.
+
+5. **Run `bunnyforge review checkup`.** Newly walked archive files may
+   produce front-matter findings, or `name-collisions` errors against
+   their live replacements (an archived file and its replacement sharing
+   a stem is now an error, not a silent ambiguity); fix or accept each —
+   that review is the archive joining canon.
+
+A workspace that skips this migration still works: old `_Archive/` is
+skipped by the prefix rule exactly as `exclude_dirs` skipped it before,
+and `Sheets/`, `Reviews/`, and `Export/` were never walked as content in
+the first place — content directories are walked by an explicit
+allowlist, not by scanning the workspace root, so an unlisted directory
+was always invisible to every read tool and check. The archive simply
+stays invisible until step 1 runs.
