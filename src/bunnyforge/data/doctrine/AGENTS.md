@@ -337,14 +337,14 @@ apply to any prep material produced here:
   a retired thing still explains why what replaced it looks the way it does.
   That is why the archive is canon rather than machinery. Two rules when
   retiring: if the name will be reused by a replacement, rename the retiring
-  file first — every stem and alias must name exactly one file, and
-  `review checkup` enforces that — and update the file's `[[compendium]]`
-  entry to its `Archive/` path. Material that never got used, or that was
-  used once and can never be relevant again, sets no precedent — an
-  abandoned draft of something later rebuilt from scratch, or a one-time
-  instruction that did its job and whose steps the result has since
-  contradicted. That moves to `_Ignore/` instead, which is never read at
-  all. Note what the second move costs: `_Ignore/` is git-ignored, so the
+  file first — every stem and alias among writeups and root docs must name
+  exactly one file, and `review checkup` enforces that — and update the
+  file's `[[compendium]]` entry to its `Archive/` path. Material that never
+  got used, or that was used once and can never be relevant again, sets no
+  precedent — an abandoned draft of something later rebuilt from scratch, or
+  a one-time instruction that did its job and whose steps the result has
+  since contradicted. That moves to `_Ignore/` instead, which is never read
+  at all. Note what the second move costs: `_Ignore/` is git-ignored, so the
   file leaves version control. It stays on disk, and its history up to the
   move remains, but a fresh clone will not contain it — which is the
   intended end state for material that constrains nothing.

@@ -103,6 +103,8 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
                 self.assertIn(needle, section)
         self.assertNotIn("_Archive", doctrine)
         self.assertNotIn("`Sheets/`", doctrine)
+        self.assertNotIn("`Export/`", doctrine)
+        self.assertNotIn("`Reviews/`", doctrine)
 
 
 def _packaged_data_root() -> Path:
