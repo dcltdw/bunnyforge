@@ -136,6 +136,7 @@ class TestListEntities(StoreCase):
             "path": "NPCs/kim-ha-eun.md",
             "title": "Kim Ha-eun",
             "summary": "Kim Ha-eun is a ferry captain in Testmere harbor.",
+            "archived": False,
         }])
 
     def test_title_falls_back_to_the_stem(self):
@@ -310,6 +311,51 @@ class TestScopedSearch(StoreCase):
             store.search("ferry", scope="everything")
         for token in ("live", "archive", "both"):
             self.assertIn(token, str(ctx.exception))
+
+
+class TestScopedListEntities(StoreCase):
+
+    def test_sectioned_both_lists_live_and_mirrored_archived_rows(self):
+        # #62's collision check makes archived names taken; the listing
+        # that says "what already exists" must therefore show them.
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        rows = {r["path"]: r for r in store.list_entities("NPCs")}
+        self.assertEqual(set(rows), {"NPCs/kim-ha-eun.md",
+                                     "Archive/NPCs/old-hag.md"})
+        self.assertFalse(rows["NPCs/kim-ha-eun.md"]["archived"])
+        self.assertTrue(rows["Archive/NPCs/old-hag.md"]["archived"])
+        self.assertEqual(rows["Archive/NPCs/old-hag.md"]["title"],
+                         "The Old Hag")
+
+    def test_scope_live_lists_only_the_live_tree(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        self.assertEqual(
+            [r["path"] for r in store.list_entities("NPCs", scope="live")],
+            ["NPCs/kim-ha-eun.md"])
+
+    def test_scope_archive_resolves_the_mirror(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        self.assertEqual(
+            [r["path"] for r in
+             store.list_entities("NPCs", scope="archive")],
+            ["Archive/NPCs/old-hag.md"])
+
+    def test_section_archive_lists_the_whole_archive_strays_included(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        self.assertEqual(
+            {r["path"] for r in store.list_entities("Archive")},
+            {"Archive/NPCs/old-hag.md", "Archive/stray.md"})
+
+    def test_scope_live_with_section_archive_is_refused(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        with self.assertRaises(_store.StoreError) as ctx:
+            store.list_entities("Archive", scope="live")
+        self.assertIn("contradicts", str(ctx.exception))
+
+    def test_unknown_scope_is_refused(self):
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        with self.assertRaises(_store.StoreError):
+            store.list_entities("NPCs", scope="everything")
 
 
 # A self-contained culture, built here rather than copied from the shipped

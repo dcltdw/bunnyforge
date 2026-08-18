@@ -180,22 +180,30 @@ class WorkspaceStore:
         out["drafts_pending"] = len(self.list_drafts())
         return out
 
-    def list_entities(self, section: str) -> list[dict]:
-        """One section's files: workspace path, title, one-line summary.
+    def list_entities(self, section: str, scope: str = "both") -> list[dict]:
+        """One section's files: workspace path, title, one-line summary,
+        and whether the file is archived.
 
         Summaries come from front matter, where this workspace's convention
         puts a retrievable one-sentence description — which is what makes a
         listing useful to an agent that has not read the files.
+
+        section resolves inside the scope's tree(s) (#66): the default
+        "both" lists live and mirrored archived members together, each
+        row labelled, because archived names are still taken (#62's
+        collision check) and a listing that hides them invites reuse.
         """
-        self._check_section(section)
+        self._check_retrieval(section, scope)
+        archive = self.ws.config.archive_dir
         out = []
         for rec in _common.iter_content_files(self.ws):
             rel = rec.path.relative_to(self.ws.root)
-            if rel.parts[0] != section:
+            if not self._in_scope(rel.parts, section, scope):
                 continue
             out.append({"path": rel.as_posix(),
                         "title": rec.fm.get("title") or rec.path.stem,
-                        "summary": rec.fm.get("summary", "")})
+                        "summary": rec.fm.get("summary", ""),
+                        "archived": rel.parts[0] == archive})
         return out
 
     def read_entity(self, path: str) -> str:
