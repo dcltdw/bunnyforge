@@ -292,6 +292,34 @@ def check_reveal_when(files: list[FileRec], workspace: Path) -> list[Finding]:
     return out
 
 
+def check_name_collisions(files: list[FileRec], workspace: Path) -> list[Finding]:
+    """Every stem and alias among authority files must be unique (#62).
+
+    The wiki exporter refuses ambiguous links rather than guessing, and
+    with the archive walked, a retired file and its live replacement
+    would collide silently until deploy time. Authority means categories
+    "entity" and "root". Inherit files are exempt on purpose: the
+    doctrine REQUIRES a brief's stem to match its subject's writeup
+    (Briefs/session-014/mira-venn.md pairs with NPCs/mira-venn.md), the
+    perception record follows the same subject-naming pattern, and
+    inherit files are never exported — designed subordination, not
+    ambiguity of authority.
+    """
+    authority = [r for r in files if r.category in ("entity", "root")]
+    out: list[Finding] = []
+    for name, paths in sorted(target_index(authority).items()):
+        if len(paths) < 2:
+            continue
+        rels = sorted(_rel(p, workspace) for p in paths)
+        out.append(Finding(
+            "error", "name-collisions", rels[0],
+            f"[[{name}]] is ambiguous: " + ", ".join(rels) +
+            " — every stem and alias must name exactly one file; rename "
+            "one (retiring a file whose name its replacement reuses "
+            "means renaming at retire time)"))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The wiki suite.
 #
@@ -491,6 +519,7 @@ CHECKS = {
     "wikilinks": check_wikilinks,
     "compendium": check_compendium,
     "reveal-when": check_reveal_when,
+    "name-collisions": check_name_collisions,
     "wiki-conf": check_wiki_conf,
     "wiki-acl": check_wiki_acl,
     "wiki-plugins": check_wiki_plugins,
@@ -500,7 +529,7 @@ CHECKS = {
 
 SUITES = {
     "checkup": ["visibility-audit", "front-matter", "wikilinks",
-                "compendium", "reveal-when"],
+                "compendium", "reveal-when", "name-collisions"],
     # Deliberately not part of checkup: it needs a live install, which CI does
     # not have. Keeping it a separate suite is the whole skippability
     # mechanism — checkup never reaches off the local machine.

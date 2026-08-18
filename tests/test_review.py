@@ -444,6 +444,57 @@ class TestRevealWhen(unittest.TestCase):
             self.assertNotIn("Mechanics/plain.md", flagged)
 
 
+class TestNameCollisions(unittest.TestCase):
+    """#62: every stem and alias among authority files must name exactly
+    one file. The exporter refuses ambiguous links; this check surfaces
+    them at review time instead of deploy time."""
+
+    def test_live_vs_archive_stem_collision_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/old-hag.md": "---\ntype: npc\n---\nnew",
+                "Archive/NPCs/old-hag.md":
+                    "---\ntype: npc\nstatus: retired\n---\nold",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            [f] = review.check_name_collisions(files, ws.root)
+            self.assertEqual(f.severity, "error")
+            self.assertIn("NPCs/old-hag.md", f.message)
+            self.assertIn("Archive/NPCs/old-hag.md", f.message)
+
+    def test_alias_collisions_are_errors_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/kim.md": "---\ntype: npc\naliases: [The Ghost]\n---\nx",
+                "NPCs/cho.md": "---\ntype: npc\naliases: [The Ghost]\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            found = review.check_name_collisions(files, ws.root)
+            self.assertEqual(len(found), 1)
+            self.assertIn("NPCs/cho.md", found[0].message)
+            self.assertIn("NPCs/kim.md", found[0].message)
+
+    def test_the_briefs_pairing_is_exempt(self):
+        # The doctrine REQUIRES a brief's stem to match its subject's
+        # writeup (doctrine: "Brief filenames must match their writeup").
+        # Inherit files are designed subordination, not ambiguous authority,
+        # and they are never exported.
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(Path(d), {
+                "NPCs/mira-venn.md": "---\ntype: npc\n---\nx",
+                "Briefs/session-001/mira-venn.md": "---\ntype: brief\n---\nx",
+            })
+            ws = _config.open_workspace(root)
+            files = review._common.iter_content_files(ws)
+            self.assertEqual(review.check_name_collisions(files, ws.root), [])
+
+    def test_wired_into_checkup(self):
+        self.assertIn("name-collisions", review.CHECKS)
+        self.assertIn("name-collisions", review.SUITES["checkup"])
+
+
 class TestRunnerCLI(unittest.TestCase):
     def test_run_suite_and_exit_code(self):
         with tempfile.TemporaryDirectory() as d:
