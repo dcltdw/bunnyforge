@@ -227,7 +227,11 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         # ("use it to pick up drafts"), actively nudging the agent to read
         # the GM's queue unbidden. The contract phrase is load-bearing.
         server = serve_mcp.build_server(scaffold(self))
-        descs = {t.name: (t.description or "")
+        # The MCP SDK derives tool descriptions from docstrings and preserves
+        # their line breaks, so the contract sentence may span lines in the
+        # source. Normalize whitespace so we can pin the phrase itself
+        # rather than its typography.
+        descs = {t.name: " ".join((t.description or "").split())
                  for t in await server.list_tools()}
         for name in ("list_inbound", "read_inbound"):
             self.assertIn("only when the GM asks", descs[name])
