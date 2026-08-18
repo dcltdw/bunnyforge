@@ -65,8 +65,10 @@ class WorkspaceStore:
         directories.
 
         The staging directory is one of the excluded ones, so a draft written
-        there is not readable back through this method: the read tools serve
-        canon, and staged material is not canon until a human promotes it.
+        there is not readable back through this method: the canon read tools
+        serve canon, and staged material is not canon until a human promotes
+        it. Staging has its own labelled door — read_staged, below — which
+        guards the inverse condition and reaches nothing else.
         """
         root = self.ws.root
         p = (root / path).resolve()
@@ -199,15 +201,64 @@ class WorkspaceStore:
                 "places": [_names.place_name(rng, inv, key)
                            for _ in range(count)]}
 
-    # -- write side ---------------------------------------------------------
-    # Staging paths are built directly rather than through _canonical: the
-    # staging directory is excluded from reads BY DESIGN, and these two
-    # methods are the only writers. Traversal is impossible by construction
-    # -- section is validated against config, and _DRAFT_NAME_RE admits no
-    # separator.
+    # -- staging ------------------------------------------------------------
 
     def _staging(self) -> Path:
         return self.ws.root / self.ws.config.staging_dir
+
+    # Reading staging back is the agent's own inbox, not a second door into
+    # canon: these two are the only way in, they reach nothing else, and the
+    # tool docstrings say the material is unreviewed. read_staged's guard is
+    # the exact inverse of _canonical() -- inside the staging directory
+    # rather than outside it -- so it cannot be talked into serving canon.
+    # Its messages name the TOOL the agent can call next, which is what it
+    # can act on; list_staging is what the tool layer registers as that.
+
+    def list_staging(self) -> list[dict]:
+        """Every staged markdown file: its workspace path and what it is.
+
+        "revision" means the mirrored canonical file exists, so the GM reads
+        it as a diff; "draft" means new content with nothing to compare
+        against. Sorted, so two calls agree.
+        """
+        staging = self._staging()
+        out = []
+        for p in sorted(staging.rglob("*.md")):
+            if not p.is_file():
+                continue
+            mirrored = self.ws.root / p.relative_to(staging)
+            out.append({"path": p.relative_to(self.ws.root).as_posix(),
+                        "kind": "revision" if mirrored.is_file() else "draft"})
+        return out
+
+    def read_staged(self, path: str) -> str:
+        """Full text of one staged file — unreviewed material, not canon."""
+        root = self.ws.root
+        staging = self._staging()
+        p = (root / path).resolve()
+        if not p.is_relative_to(root):
+            raise StoreError(f"path escapes the workspace: {path}")
+        if not p.is_relative_to(staging):
+            raise StoreError(
+                f"not a staged path: {path} — read_staged serves "
+                f"{self.ws.config.staging_dir}/ only; canonical files are "
+                "read with read_entity")
+        if p.suffix != ".md":
+            raise StoreError(
+                f"not a staged markdown file: {path} — staging holds .md "
+                "drafts and revisions")
+        if not p.is_file():
+            raise StoreError(
+                f"no such staged file: {path} — list_staged shows what is "
+                "currently staged")
+        return p.read_text(encoding="utf-8")
+
+    # -- write side ---------------------------------------------------------
+    # Staging paths are built directly rather than through _canonical: the
+    # staging directory is excluded from the canon reads BY DESIGN, and these
+    # two methods are the only writers. Traversal is impossible by
+    # construction -- section is validated against config, and _DRAFT_NAME_RE
+    # admits no separator.
 
     def stage_draft(self, section: str, name: str, content: str) -> str:
         self._check_section(section)
