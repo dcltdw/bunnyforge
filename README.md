@@ -183,6 +183,9 @@ no API token stored anywhere.
 1. Land the changes on `main` in the usual way (branch, PR, review).
 2. Bump `version` in `pyproject.toml`. **This is a separate step from the
    tag, which is why they drift** — CI refuses a tag that disagrees with it.
+   In the same PR, rename `CHANGELOG.md`'s `[Unreleased]` section to
+   `[X.Y.Z] — <date>`, start a fresh empty `[Unreleased]`, and update the
+   link definitions at the bottom of the file.
 3. Tag and push:
 
        git tag vX.Y.Z && git push origin vX.Y.Z
