@@ -245,14 +245,29 @@ class WorkspaceStore:
         scope and section resolve per _in_scope (#66); every hit says
         whether it is archived, so the caller buckets hits without
         parsing paths.
+
+        Hits are ordered live-first (#71): every live hit precedes every
+        archived hit, path order within each tree -- so a capped reply
+        keeps current material. That ordering is the whole promise;
+        relevance stays the caller's job.
         """
         q = query.strip().lower()
         if not q:
             raise StoreError("empty search query")
         self._check_retrieval(section, scope)
 
+        # Live before archived, path order within each tree (#71): an
+        # archive that has outgrown SEARCH_CAP must not fill the reply
+        # before any live file is seen. Re-sorted here, not in
+        # iter_content_files, whose global path order its other callers
+        # (and TestEnumerator's whole-list assertions) rely on.
+        recs = sorted(
+            _common.iter_content_files(self.ws),
+            key=lambda r: (self._is_archived(
+                r.path.relative_to(self.ws.root).parts),
+                r.path.as_posix()))
         hits: list[dict] = []
-        for rec in _common.iter_content_files(self.ws):
+        for rec in recs:
             rel = rec.path.relative_to(self.ws.root)
             if not self._in_scope(rel.parts, section, scope):
                 continue
@@ -267,9 +282,8 @@ class WorkspaceStore:
             if len(hits) >= SEARCH_CAP:
                 # Say so rather than truncating silently: a capped reply that
                 # looks complete is worse than a short one that admits it.
-                # Archived hits sort first (#66), so a large archive can
-                # fill the cap before any live hit is seen -- name the
-                # scope that actually works around it, not just "narrow".
+                # Live sorts first (#71), so what survived the cap is the
+                # current material.
                 hits.append({"path": "", "snippet":
                              f"(truncated at {SEARCH_CAP} hits — narrow "
                              "the query, or pass scope='live' to exclude "

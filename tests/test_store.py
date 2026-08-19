@@ -387,6 +387,49 @@ class TestScopedSearch(StoreCase):
         self.assertEqual(archived, {"History/NPCs/old-hag.md"})
 
 
+class TestLiveFirstSearch(StoreCase):
+    """#71: every live hit precedes every archived hit, path order within
+    each tree -- so SEARCH_CAP keeps the current answer instead of letting
+    an archive that outgrew it fill the reply with superseded material.
+    A minimal ordering contract, not relevance: the walk stays literal.
+    """
+
+    def test_live_hits_precede_archived_hits(self):
+        # Exact list, per the TestEnumerator convention: order is the
+        # contract here, so a set-based assertion would test nothing.
+        # Uppercase sorts before lowercase, hence NPCs/ before
+        # front-burner.md within the live group.
+        store = _store.WorkspaceStore(self.make_archived_ws())
+        self.assertEqual(
+            [h["path"] for h in store.search("ferry")],
+            ["NPCs/kim-ha-eun.md", "front-burner.md",
+             "Archive/NPCs/old-hag.md", "Archive/stray.md"])
+
+    def test_cap_prefers_live_hits_over_a_larger_archive(self):
+        # The defect (#71): an archive bigger than SEARCH_CAP used to fill
+        # the whole reply -- 50 archived hits, zero live, including the
+        # live file that is the current answer. Live-first means every
+        # live hit is present whenever live matches <= SEARCH_CAP.
+        ws = self.make_ws()
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        for i in range(_store.SEARCH_CAP):
+            (arch / f"extra-{i:03d}.md").write_text(
+                f"---\ntitle: Extra {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        hits = store.search("ferry")
+        # 2 live + 48 archived fill the cap; the sentinel row ends it.
+        self.assertEqual(
+            [h["path"] for h in hits],
+            ["NPCs/kim-ha-eun.md", "front-burner.md"]
+            + [f"Archive/NPCs/extra-{i:03d}.md"
+               for i in range(_store.SEARCH_CAP - 2)]
+            + [""])
+        self.assertFalse(hits[0]["archived"])
+        self.assertTrue(hits[2]["archived"])
+
+
 class TestScopedListEntities(StoreCase):
 
     def test_sectioned_both_lists_live_and_mirrored_archived_rows(self):

@@ -129,9 +129,10 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         narrows retrieval to live canon ("live"), archived canon
         ("archive"), or both (default — every hit is labelled); section
         resolves inside the scope's tree(s) the same way as list_entities
-        (section="NPCs" covers NPCs/ and Archive/NPCs/). Use it
-        to check what has already been established about a name, place,
-        or idea. For creative work the scope is the GM's call: ask at
+        (section="NPCs" covers NPCs/ and Archive/NPCs/). Live hits come
+        before archived ones, so a truncated reply keeps current
+        material. Use it to check what has already been established
+        about a name, place, or idea. For creative work the scope is the GM's call: ask at
         task start if the request has not said (the AGENTS.md doctrine
         resource carries the rule)."""
         return store.search(query, section, scope)
