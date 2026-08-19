@@ -32,13 +32,90 @@ is refused with `421` before it reaches authentication.
 
 A **named tunnel** (free with a Cloudflare-managed domain) is the
 recommended recipe: the hostname — and therefore the connector URL in
-claude.ai and the OAuth trust it anchors — survives restarts. A quick
-tunnel (`cloudflared tunnel --url http://127.0.0.1:8765`) also works, but
-its hostname changes every run: pass the new hostname to `--public-host`
-and update the connector URL in claude.ai each time.
+claude.ai and the OAuth trust it anchors — survives restarts. Creating
+one is six commands, once: see the next section. A quick tunnel
+(`cloudflared tunnel --url http://127.0.0.1:8765`) also works and needs
+no domain, but its hostname changes every run: pass the new hostname to
+`--public-host` and update the connector URL in claude.ai each time.
 
 Local testing needs no tunnel: `--no-auth` (unauthenticated, loud
 warning) or `--auth-key` with the default localhost issuer.
+
+## Set up a named tunnel (once)
+
+Needs a domain whose nameservers are Cloudflare's. Everything below is
+free, and once it is done the hostname is permanent.
+
+1. **Authorise `cloudflared` against your zone.**
+
+        cloudflared tunnel login
+
+   Opens a browser, asks which zone, and writes
+   `~/.cloudflared/cert.pem`. That certificate is what lets the next two
+   commands create tunnels and edit DNS on your account — treat it as a
+   credential.
+
+2. **Create the tunnel.**
+
+        cloudflared tunnel create bunnyforge-mcp
+
+   Prints a UUID and writes `~/.cloudflared/<UUID>.json`. The tunnel
+   exists at this point but routes nothing and runs nowhere.
+
+3. **Point a hostname at it.**
+
+        cloudflared tunnel route dns bunnyforge-mcp mcp.example.com
+
+   Creates a proxied `CNAME` to `<UUID>.cfargotunnel.com`. This is the
+   step that needs Cloudflare as your DNS authority, and it is why the
+   hostname is permanent: the record belongs to the tunnel rather than
+   to a session. If the record already exists and points elsewhere, the
+   command refuses rather than clobbering it.
+
+4. **Say where traffic goes** — `~/.cloudflared/config.yml`:
+
+        tunnel: bunnyforge-mcp
+        credentials-file: /Users/you/.cloudflared/<UUID>.json
+
+        ingress:
+          - hostname: mcp.example.com
+            service: http://127.0.0.1:8765
+          - service: http_status:404
+
+   `8765` is `serve-mcp`'s default port; move one and move the other.
+   The trailing `http_status:404` is the catch-all rule, and it is
+   required — cloudflared refuses to start without one. Give
+   `credentials-file` an absolute path: the launch agent in step 6 does
+   not expand `~`.
+
+5. **Run it by hand once,** and prove the whole path before trusting it:
+
+        cloudflared tunnel run bunnyforge-mcp
+        bunnyforge serve-mcp --public-host mcp.example.com
+        bunnyforge serve-mcp --check https://mcp.example.com
+
+6. **Make the tunnel start on its own.**
+
+        cloudflared service install
+
+   On macOS this is a *user launch agent* and takes no `sudo`; it reads
+   the `config.yml` from step 4. On Linux the same command installs a
+   system service and does need `sudo`. Note what a launch agent does
+   not do: it starts **at login, not at boot**, so a machine that
+   reboots with nobody logging in comes back without a tunnel.
+
+Two things this deliberately does not do.
+
+**Starting the tunnel does not start `serve-mcp`.** The tunnel is the
+route; the server is still yours to run. Until it is up the hostname
+answers `502`, which is the correct answer rather than a fault.
+
+**Do not put Cloudflare Access in front of the hostname.** The instinct
+is a good one — everything served is GM-only — but the mechanism is
+wrong: claude.ai has to complete this server's own OAuth flow against
+that URL, and it cannot log through an Access challenge to get there.
+The authentication is already present in the GM key and the OAuth
+grant, without which the server refuses to start.
 
 ## Check it before adding the connector
 
@@ -179,6 +256,9 @@ but not already-issued tokens — delete the state file for that.
 ## Troubleshooting
 
 - **401 from `/mcp`:** no or expired token — reconnect from claude.ai.
+- **502 from the public hostname:** the tunnel is up and the server is
+  not, or the server is on a port the `ingress` rule does not name. Start
+  `serve-mcp`; check the port in `~/.cloudflared/config.yml` matches.
 - **421 Invalid Host header through a tunnel:** DNS-rebinding protection
   does not know your public hostname. Pass `--public-host <hostname>` —
   the same hostname the tunnel serves, with no scheme and no port. The
