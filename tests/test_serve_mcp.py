@@ -264,7 +264,9 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         server = serve_mcp.build_server(scaffold(self))
         tools = {t.name: t for t in await server.list_tools()}
         for name in ("search", "list_entities"):
-            scope = tools[name].inputSchema["properties"]["scope"]
+            # mcp>=2.0 names this attribute input_schema; the camelCase
+            # inputSchema is only the wire alias.
+            scope = tools[name].input_schema["properties"]["scope"]
             self.assertEqual(scope.get("default"), "both", name)
 
     async def test_scope_guidance_reaches_the_descriptions(self):
