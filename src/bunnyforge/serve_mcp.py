@@ -99,7 +99,10 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         to resume them) and inbound_pending (files in the GM's inbound
         queue). If inbound_pending is non-zero you may mention it and
         offer to extract; do not list or read the queue unless the GM
-        asks. Call this before anything else."""
+        asks. Call this before anything else. Then, before work begins,
+        answer the task-start questions in the AGENTS.md doctrine
+        resource — ask the GM the ones the request has not answered, in
+        one message."""
         return store.overview()
 
     @server.tool()
