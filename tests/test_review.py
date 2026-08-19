@@ -38,6 +38,17 @@ def make_workspace(root: Path, files: dict) -> Path:
 
 
 class TestEnumerator(unittest.TestCase):
+    """Convention: assert the *whole* enumerated result, not absences.
+
+    iter_content_files returns a list, so `assertEqual(rels, [...])` closes
+    the entire negative space -- strictly stronger than an assertNotIn per
+    excluded path, and it cannot quietly stop guarding anything when a
+    directory is renamed. Three separate assertions went vacuous that way
+    during #62 (a `Sheets` fixture kept passing after the default became
+    `_Sheets`); #68 was the last of them. An assertNotIn here should be
+    read as a bug unless the result genuinely is not enumerable.
+    """
+
     def test_categories_and_exclusions(self):
         # Exact equality, not four assertNotIns: the enumerator returns an
         # enumerable list, so asserting the whole set closes the entire
