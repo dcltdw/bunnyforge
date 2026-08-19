@@ -282,6 +282,17 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ask at task start", descs[name], name)
         self.assertIn("archive_sections", descs["campaign_overview"])
 
+    async def test_task_start_pointer_reaches_campaign_overview(self):
+        # #70: campaign_overview is the "call this before anything else"
+        # moment, so its description is where the task-start ritual gets
+        # its hook. Pin the pointer phrases, not the list -- the AGENTS.md
+        # doctrine resource owns the list.
+        server = serve_mcp.build_server(scaffold(self))
+        descs = {t.name: " ".join((t.description or "").split())
+                 for t in await server.list_tools()}
+        self.assertIn("task-start questions", descs["campaign_overview"])
+        self.assertIn("in one message", descs["campaign_overview"])
+
     async def test_search_scope_live_excludes_archived_hits(self):
         store = scaffold(self)
         arch = store.ws.root / "Archive" / "NPCs"
