@@ -9,6 +9,22 @@ This file starts at 0.5.0. For anything earlier, see the
 [releases page](https://github.com/dcltdw/bunnyforge/releases) and the git
 history.
 
+Entries land under `[Unreleased]` in the same PR as the change they
+record; the release PR renames that section to the version it ships and
+starts a fresh one.
+
+## [Unreleased]
+
+### Changed
+
+- `docs/serve-mcp.md` now walks through creating the named tunnel it
+  recommends — login, create, route dns, config, launch agent — plus the
+  traps: the ingress catch-all is mandatory, the credentials path must be
+  absolute, a launch agent starts at login rather than boot, and the
+  hostname answers 502 until `serve-mcp` is started. One
+  anti-recommendation: no Cloudflare Access in front of the hostname; the
+  connector must complete the server's own OAuth flow against it. (#84)
+
 ## [0.5.0] — 2026-08-18
 
 The release where retrieval became scoped and ordered, and where the
@@ -100,3 +116,6 @@ See step 5 of the migration recipe.
 **Packaged prose in this release was cleared by deliberate human reads at PR
 time, not by an automated check** — nothing yet screens `src/bunnyforge/data/`
 for campaign-specific terms. That is the basis for the portability claim.
+
+[Unreleased]: https://github.com/dcltdw/bunnyforge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dcltdw/bunnyforge/compare/v0.4.0...v0.5.0
