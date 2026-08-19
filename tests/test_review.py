@@ -38,49 +38,82 @@ def make_workspace(root: Path, files: dict) -> Path:
 
 
 class TestEnumerator(unittest.TestCase):
+    """Convention: assert the *whole* enumerated result, not absences.
+
+    iter_content_files returns a list, so `assertEqual(rels, [...])` closes
+    the entire negative space -- strictly stronger than an assertNotIn per
+    excluded path, and it cannot quietly stop guarding anything when a
+    directory is renamed. Three separate assertions went vacuous that way
+    during #62 (a `Sheets` fixture kept passing after the default became
+    `_Sheets`); #68 was the last of them. An assertNotIn here should be
+    read as a bug unless the result genuinely is not enumerable.
+    """
+
     def test_categories_and_exclusions(self):
+        # Exact equality, not four assertNotIns: the enumerator returns an
+        # enumerable list, so asserting the whole set closes the entire
+        # negative space at once. The assertNotIn form this replaced could
+        # not fail -- it named a directory in no allowlist *and* an
+        # extension the glob filters, so no bug could ever surface it (#68).
+        #
+        # Each excluded entry below is held out by exactly one filter, so a
+        # regression in any single filter fails this test:
+        #   NPCs/README.md      the README skip inside _walk_md_files
+        #   NPCs/sheet.html     the *.md glob -- NPCs itself *is* walked
+        #   Maps/hexcrawl.md    the allowlist: top-level walking covers only
+        #                       entity_dirs + inherit_dirs + root_docs +
+        #                       archive_dir, and Maps is in none of them
+        #   _Archive/old.md     the general _-prefix rule (_common.is_machinery),
+        #   _Templates/npc.md   not exclude_dirs, which since #62 defaults to
+        #                       ["docs", "scripts", "tests"] and lists neither
         with tempfile.TemporaryDirectory() as d:
             root = make_workspace(Path(d), {
                 "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
                 "NPCs/README.md": "# readme",
+                "NPCs/sheet.html": "<html>",
                 "Briefs/session-001/mira-venn.md": "---\ntype: brief\n---\nb",
                 "compendium.md": "# Compendium",
                 "_Archive/old.md": "---\ntype: npc\n---\nx",
                 "_Templates/npc.md": "---\ntype: npc\n---\nx",
-                "Sheets/session-001/npc-mira-venn.html": "<html>",
+                "Maps/hexcrawl.md": "---\ntype: npc\n---\nx",
             })
             ws = _config.open_workspace(root)
             recs = _common.iter_content_files(ws)
             by_path = {r.path.relative_to(ws.root).as_posix(): r for r in recs}
 
-            self.assertIn("NPCs/mira-venn.md", by_path)
-            self.assertEqual(by_path["NPCs/mira-venn.md"].category, "entity")
-            self.assertEqual(by_path["Briefs/session-001/mira-venn.md"].category, "inherit")
-            self.assertEqual(by_path["compendium.md"].category, "root")
+            self.assertEqual(
+                list(by_path),
+                ["Briefs/session-001/mira-venn.md",
+                 "NPCs/mira-venn.md",
+                 "compendium.md"])
 
-            # Excluded: READMEs, _Archive, _Templates, generated Sheets.
-            self.assertNotIn("NPCs/README.md", by_path)
-            self.assertNotIn("_Archive/old.md", by_path)
-            self.assertNotIn("_Templates/npc.md", by_path)
-            self.assertNotIn("Sheets/session-001/npc-mira-venn.html", by_path)
+            self.assertEqual(by_path["NPCs/mira-venn.md"].category, "entity")
+            self.assertEqual(
+                by_path["Briefs/session-001/mira-venn.md"].category, "inherit")
+            self.assertEqual(by_path["compendium.md"].category, "root")
 
     def test_exclude_dirs_filters_nested_directories_too(self):
         # test_categories_and_exclusions above only ever puts an excluded
         # directory at the workspace *root*, where entity/inherit dirs are
-        # never walked from anyway — so the exclude_dirs filter inside the
+        # never walked from anyway -- so the exclude_dirs filter inside the
         # rglob loop never actually fires there. This puts one *inside* an
         # entity dir, the only place the filter is ever consulted.
+        #
+        # `docs` is a real exclude_dirs member (_config._DEFAULTS). The
+        # fixture used to say NPCs/_Archive/, which since #62 is caught by
+        # the _-prefix rule before exclude_dirs is consulted at all -- so
+        # this test was named for a filter it never exercised (#68), and
+        # disabling that filter left the whole suite passing.
         with tempfile.TemporaryDirectory() as d:
             root = make_workspace(Path(d), {
                 "NPCs/mira-venn.md": "---\ntype: npc\nvisibility: gm-only\n---\nbody",
-                "NPCs/_Archive/old.md": "---\ntype: npc\nvisibility: gm-only\n---\nx",
+                "NPCs/docs/notes.md": "---\ntype: npc\nvisibility: gm-only\n---\nx",
             })
             ws = _config.open_workspace(root)
-            recs = _common.iter_content_files(ws)
-            by_path = {r.path.relative_to(ws.root).as_posix(): r for r in recs}
+            rels = [r.path.relative_to(ws.root).as_posix()
+                    for r in _common.iter_content_files(ws)]
 
-            self.assertIn("NPCs/mira-venn.md", by_path)
-            self.assertNotIn("NPCs/_Archive/old.md", by_path)
+            self.assertEqual(rels, ["NPCs/mira-venn.md"])
 
     def test_machinery_components_are_skipped_by_the_general_rule(self):
         # #62: a leading _ means "not canon" wherever it appears. The rule
