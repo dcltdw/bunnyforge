@@ -292,6 +292,7 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
                  for t in await server.list_tools()}
         self.assertIn("task-start questions", descs["campaign_overview"])
         self.assertIn("in one message", descs["campaign_overview"])
+        self.assertIn("AGENTS.md", descs["campaign_overview"])
 
     async def test_search_scope_live_excludes_archived_hits(self):
         store = scaffold(self)
