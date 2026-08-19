@@ -245,14 +245,33 @@ class WorkspaceStore:
         scope and section resolve per _in_scope (#66); every hit says
         whether it is archived, so the caller buckets hits without
         parsing paths.
+
+        Hits are ordered live-first (#71): every live hit precedes every
+        archived hit, path order within each tree -- so a capped reply
+        keeps current material. That ordering is the whole promise;
+        relevance stays the caller's job.
+
+        A truncated reply ends with a sentinel row that says which
+        tree the cut hits came from; a reply that exactly fills the
+        cap with nothing left over gets no sentinel.
         """
         q = query.strip().lower()
         if not q:
             raise StoreError("empty search query")
         self._check_retrieval(section, scope)
 
+        # Live before archived, path order within each tree (#71): an
+        # archive that has outgrown SEARCH_CAP must not fill the reply
+        # before any live file is seen. Re-sorted here, not in
+        # iter_content_files, whose global path order its other callers
+        # (and TestEnumerator's whole-list assertions) rely on.
+        recs = sorted(
+            _common.iter_content_files(self.ws),
+            key=lambda r: (self._is_archived(
+                r.path.relative_to(self.ws.root).parts),
+                r.path.as_posix()))
         hits: list[dict] = []
-        for rec in _common.iter_content_files(self.ws):
+        for rec in recs:
             rel = rec.path.relative_to(self.ws.root)
             if not self._in_scope(rel.parts, section, scope):
                 continue
@@ -260,21 +279,34 @@ class WorkspaceStore:
             i = text.lower().find(q)
             if i == -1:
                 continue
+            if len(hits) >= SEARCH_CAP:
+                # This match is the 51st, so the reply is genuinely
+                # truncated -- a reply of exactly SEARCH_CAP matches gets
+                # no sentinel, because nothing was cut. Say what WAS cut:
+                # live sorts first (#71), so an archived overflow match
+                # means every remaining match is archived too, while a
+                # live one means live material itself overflowed. Under
+                # an explicit single-tree scope there is no scope advice
+                # to give -- the shipped static text used to recommend
+                # scope='live' even to a scope='archive' caller.
+                if scope != "both":
+                    advice = "narrow the query, or add a section filter"
+                elif self._is_archived(rel.parts):
+                    advice = ("no live hits were cut, only archived "
+                              "ones; narrow the query, or pass "
+                              "scope='archive' to search the archive "
+                              "alone")
+                else:
+                    advice = ("live hits were cut and archived material "
+                              "was not reached; narrow the query, or "
+                              "add a section filter")
+                hits.append({"path": "", "snippet":
+                             f"(truncated at {SEARCH_CAP} hits — {advice})"})
+                break
             lo = max(0, i - SNIPPET_RADIUS)
             hi = min(len(text), i + len(q) + SNIPPET_RADIUS)
             hits.append({"path": rel.as_posix(), "snippet": text[lo:hi],
                          "archived": self._is_archived(rel.parts)})
-            if len(hits) >= SEARCH_CAP:
-                # Say so rather than truncating silently: a capped reply that
-                # looks complete is worse than a short one that admits it.
-                # Archived hits sort first (#66), so a large archive can
-                # fill the cap before any live hit is seen -- name the
-                # scope that actually works around it, not just "narrow".
-                hits.append({"path": "", "snippet":
-                             f"(truncated at {SEARCH_CAP} hits — narrow "
-                             "the query, or pass scope='live' to exclude "
-                             "archived material)"})
-                break
         return hits
 
     # -- generators ---------------------------------------------------------
