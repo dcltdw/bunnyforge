@@ -70,6 +70,34 @@ knows, what the scene has to accomplish. Ask those before drafting, not after.
 If you think the requested thing is the wrong thing to write, say so before
 writing it.
 
+## Task-start context
+
+Some questions recur at the start of every task, and missing one is how
+work goes wrong quietly. Before work begins, check each question below.
+Skip the ones my request already answers and the ones that do not apply
+to the kind of task at hand — skipping all of them is the normal case
+for a complete request, and this list licenses no manufactured asks (see
+**Clarify before proceeding** above). Ask me the rest **in one
+message**, not one at a time.
+
+1. **What are we building** — a plot, an encounter, a combat? A writeup
+   or a brief? (**What gets written where**, below, carries the
+   distinction.)
+2. **Will new NPCs be created, or existing ones reused?**
+3. **Should retrieval draw on live canon, the archive, or both?**
+   (**Retrieval scope**, below, carries the full rule.)
+4. **Is any of the output meant to be player-visible?** `gm-only` is the
+   fail-safe default (**Player visibility**, below), but a wrong silent
+   default costs a re-edit later.
+
+Answers attach to the work and persist: picking a piece back up later
+continues under the answers it was made with. One bundled ask per task;
+hold the answers until the task changes or I re-answer.
+
+The list is doctrine, and it grows as gaps appear. Questions specific to
+one campaign belong in `[[campaign-doctrine]]`; a gap that would bite
+any campaign belongs upstream as a bunnyforge ticket.
+
 ## Verify against the files, not against earlier prose
 
 A fact restated in a conversation summary is not verified. Before relying on a
@@ -228,12 +256,10 @@ include the separator, even if the GM notes section is empty. A handout is a
   quietly re-skins a retired one). Labels do not protect generation:
   material read is material that shapes the output. Only I can tell the
   two intents apart.
-- So at the start of a task that will create or revise canon, ask me
-  whether its retrieval should be live-only, archive-only, or both —
-  unless my request already answers it, or the work's scope is already
-  established. The scope attaches to the work and persists: picking a
-  piece back up later continues under the scope it was made with. One ask
-  per task; hold it until the task changes or I re-scope it.
+- So the scope question is one of the standing questions in **Task-start
+  context** above, and runs under its discipline: raised when a task
+  will create or revise canon and my request has not already answered
+  it, bundled with the other open questions, held for the task.
 - Mechanically: over MCP, pass `scope=` to `search` and `list_entities`;
   on the filesystem, read or skip `Archive/` accordingly.
 

@@ -106,6 +106,37 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
         self.assertNotIn("`Export/`", doctrine)
         self.assertNotIn("`Reviews/`", doctrine)
 
+    def test_task_start_context_carries_the_question_list(self):
+        # #70: the standing checklist every task is held against before
+        # work begins. Pin the section, the four questions, the bundling
+        # discipline, and the campaign-side growth pointer.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("## Task-start context", doctrine)
+        section = doctrine.split("## Task-start context", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        section = " ".join(section.split())
+        for needle in ("What are we building",
+                       "new NPCs",
+                       "live canon, the archive, or both",
+                       "player-visible",
+                       "in one message",
+                       "[[campaign-doctrine]]"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, section)
+
+    def test_the_ask_discipline_has_one_owner(self):
+        # #70 collapsed the retrieval-scope section's own ask discipline
+        # into Task-start context; the scope section must point there
+        # instead of restating it. "ask me whether" and "One ask per task"
+        # were the old restatement's spine.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        scope = doctrine.split("## Retrieval scope", 1)[1]
+        scope = scope.split("\n## ", 1)[0]
+        scope = " ".join(scope.split())
+        self.assertIn("Task-start context", scope)
+        self.assertNotIn("ask me whether", scope)
+        self.assertNotIn("One ask per task", scope)
+
 
 def _packaged_data_root() -> Path:
     """The data/ tree as a real directory.
@@ -500,6 +531,15 @@ class TestWhatInitWrites(unittest.TestCase):
         self.assertTrue(stub.is_file())
         self.assertEqual(stub.read_bytes(),
                          init.packaged_bytes("root/campaign-doctrine.md"))
+
+    def test_campaign_doctrine_stub_carries_task_start_section(self):
+        # #70: campaign-specific task-start questions get a designated
+        # home in the GM-owned half. Only new scaffolds receive it;
+        # existing workspaces lack the section harmlessly because
+        # nothing reads it mechanically.
+        stub = init.packaged_bytes(
+            "root/campaign-doctrine.md").decode("utf-8")
+        self.assertIn("## Task-start questions for this campaign", stub)
 
 
 class TestGeneratedConfig(unittest.TestCase):

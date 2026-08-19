@@ -26,6 +26,13 @@ unchanged. Nothing here is required.
      how it changes, and say why. An exemption nobody wrote a reason for gets
      re-litigated every few months. -->
 
+## Task-start questions for this campaign
+
+<!-- Extra questions this campaign's tasks must answer before work begins,
+     beyond the generic set in AGENTS.md's "Task-start context" section.
+     Also the place to strike or rephrase a generic question -- name the
+     rule displaced, as with any exemption. -->
+
 ## Extra tools and checks
 
 <!-- Commands this campaign runs that bunnyforge does not ship: campaign
