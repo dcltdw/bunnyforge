@@ -2,15 +2,19 @@
 
 An opinionated way to run a tabletop-RPG campaign as a plain-files
 workspace — designed to be managed collaboratively by a GM and an AI
-agent, with one-way publishing to a DokuWiki players' site.
+agent, with one-way publishing to a DokuWiki players' site and a separate
+one-way path back for what the players wrote there.
 
 Your campaign is a directory of Markdown files with front matter: NPCs,
 factions, places, sessions, mechanics. bunnyforge gives that directory a
 skeleton, reviews its integrity, generates names from culture inventories
-you define, and exports the player-visible slice to DokuWiki. Everything
-is a text file; the only state is your git history. Every command works
-offline except the wiki deploy itself — and even that keeps a fully
-offline path via `deploy-export --render-only`.
+you define, exports the player-visible slice to DokuWiki, and imports the
+players' own pages back as *perceptions* — recorded belief, never canon.
+Everything is a text file; the only state is your git history. Three
+things reach the network — the wiki deploy, `serve-mcp`, and `vscode
+install`/`update` fetching the extension — and the deploy keeps a fully
+offline path via `deploy-export --render-only`. The perceptions import is
+offline too: it reads DokuWiki's data directory, not its API.
 
 - **Python ≥ 3.11, zero runtime dependencies.**
 - **Agent-first doctrine.** `init` writes an `AGENTS.md` contract that
@@ -22,8 +26,10 @@ offline path via `deploy-export --render-only`.
   filling them in is answering questions rather than staring at a blank
   file. See [`docs/adopting-doctrine.md`](docs/adopting-doctrine.md) for
   how to adopt a new version.
-- **Player-visibility model.** Every file carries a `visibility` field;
-  the exporter enforces it, so GM-only material cannot leak to the wiki.
+- **Player-visibility model.** Every entity file carries a `visibility`
+  field, and the exporter enforces it on everything it walks — an unset or
+  unreadable value fails safe to `gm-only` — so GM-only material cannot
+  leak to the wiki.
 
 ## Install
 
@@ -51,7 +57,7 @@ entity files from the templates in `_Templates/`.
 | `build-sheets` | build one-page HTML reference sheets for a session |
 | `names` | generate culture-appropriate names |
 | `vscode` | install the preview extension and toggle editor colouring |
-| `serve-mcp` | serve the workspace to a remote AI agent over MCP — [guide](docs/serve-mcp.md) (needs `bunnyforge[mcp]`) |
+| `serve-mcp` | serve the workspace to a remote AI agent over MCP — reads, plus drafts and proposed revisions it writes for your review — [guide](docs/serve-mcp.md) (needs `bunnyforge[mcp]`) |
 | `test` | run the workspace test suite |
 
 Run `bunnyforge <command> --help` for a command's own options.
@@ -85,6 +91,15 @@ directory layout, wiki namespace, name-generator inventories. Commands
 work from any subdirectory (they walk up to the marker), from
 `$BUNNYFORGE_WORKSPACE`, or from anywhere with `--workspace PATH`.
 
+`_ExtractInbound/` is the third way material arrives, after authoring it
+yourself and importing perceptions: an inbound queue for text brought in
+from elsewhere — typically wiki pages unpacked from a tarball. Nothing in
+it is canon; it is unreviewed source, kept out of the canon read tools, and
+an agent reads it only when you ask it to extract. Spent sources move to
+`_ExtractInbound/_Done/` rather than being deleted. There is no CLI command
+for the queue — it is reachable over MCP, and
+[`docs/serve-mcp.md`](docs/serve-mcp.md) describes the flow.
+
 `init` also scaffolds a `tests/` folder. Its `README.md` explains the
 campaign tests it invites you to write — the setting-specific invariants
 `review checkup` cannot know, like "every NPC's faction actually exists" —
@@ -111,24 +126,36 @@ The [`samples/`](samples/) directory is a ladder of eight worked
 configurations, from a single people to a full multi-culture setting with
 registers and spelling variants.
 
-## DokuWiki export
+## DokuWiki: publishing out, perceptions back
 
 `export-player` renders the player-visible slice; `deploy-export` renders it
-into DokuWiki markup and deploys it to the wiki over its JSON-RPC API. Sync
-is strictly one-way: the wiki is a published artifact, never a source of
-truth. `import-perceptions` brings player-authored pages back as
-*perceptions* — recorded belief, explicitly not canon.
+into DokuWiki markup and deploys it to the wiki over its JSON-RPC API.
+Publishing is strictly one-way: the wiki is a published artifact, never a
+source of truth.
+
+`import-perceptions` is the return path, and it is one-way in its own
+direction — it reads the wiki and never writes to it. Player-authored pages
+land in `Perceptions/` carrying `canon: perception`: a record of what the
+players believed at a point in time, explicitly not canon, and never to be
+corrected in place — correcting them destroys the only thing they are good
+for. It reads DokuWiki's data directory rather than its API, which is what
+makes it offline and what makes `--as-of` exact: every historical revision
+is already on disk, so a session-boundary snapshot costs nothing.
 
 ## Dry runs and --go
 
-Every mutating command follows one convention: **the default run is a dry
-run; `--go` performs the writes.** A bare `bunnyforge deploy-export` fetches
-and prints the full deploy plan without writing anything; a bare
-`bunnyforge import-perceptions` reports what it would import. Re-run with
-`--go` to act. (`deploy-export --render-only` is not a rehearsal — it is a
-different, offline deliverable, and needs no wiki config at all.)
+The two commands that write across the wiki boundary follow one convention:
+**the default run is a dry run; `--go` performs the writes.** A bare
+`bunnyforge deploy-export` fetches and prints the full deploy plan without
+writing anything; a bare `bunnyforge import-perceptions` reports what it
+would import. Re-run with `--go` to act. (`deploy-export --render-only` is
+not a rehearsal — it is a different, offline deliverable, and needs no wiki
+config at all.)
 
-Future mutating commands inherit this convention.
+The commands that only generate derived output inside the workspace —
+`export-player`, `build-sheets` — just write, because `_Export/` and
+`_Sheets/` are disposable and regenerable. Future commands that cross the
+wiki boundary inherit the `--go` convention.
 
 ## Development
 
