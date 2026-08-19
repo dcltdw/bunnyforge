@@ -532,6 +532,15 @@ class TestWhatInitWrites(unittest.TestCase):
         self.assertEqual(stub.read_bytes(),
                          init.packaged_bytes("root/campaign-doctrine.md"))
 
+    def test_campaign_doctrine_stub_carries_task_start_section(self):
+        # #70: campaign-specific task-start questions get a designated
+        # home in the GM-owned half. Only new scaffolds receive it;
+        # existing workspaces lack the section harmlessly because
+        # nothing reads it mechanically.
+        stub = init.packaged_bytes(
+            "root/campaign-doctrine.md").decode("utf-8")
+        self.assertIn("## Task-start questions for this campaign", stub)
+
 
 class TestGeneratedConfig(unittest.TestCase):
     """The generated campaign.toml round-trips through _config.load, and every
