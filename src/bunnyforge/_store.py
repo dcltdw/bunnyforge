@@ -33,6 +33,8 @@ from bunnyforge._config import Workspace
 SEARCH_CAP = 50       # hits per search reply; the reply says when it truncated
 SNIPPET_RADIUS = 80   # characters of context on each side of a match
 NAME_COUNT_CAP = 50   # names per request; a brainstorm needs a handful, not a page
+SCOPES = ("live", "archive", "both")  # exactly two trees exist (#62), so
+                                      # "both" is the honest union token
 
 # Draft names become filenames. No path separators, no leading dot or
 # underscore (dot-files hide; the _-prefix is the workspace's own marker
@@ -76,6 +78,55 @@ class WorkspaceStore:
             raise StoreError(f"unknown section {section!r} — one of: "
                              + ", ".join(self._sections()))
 
+    def _check_retrieval(self, section: str | None, scope: str) -> None:
+        """Validate a search/list_entities filter pair before any walk.
+
+        scope names which tree(s) to read. One combination is a
+        contradiction rather than an empty answer -- the archive
+        section under a scope that excludes archived files -- and a
+        contradiction is refused, not served (#66).
+        """
+        if scope not in SCOPES:
+            raise StoreError(f"unknown scope {scope!r} — one of: "
+                             + ", ".join(SCOPES))
+        if section is not None:
+            self._check_section(section)
+            if scope == "live" and section == self.ws.config.archive_dir:
+                raise StoreError(
+                    f"section {section!r} contradicts scope 'live': "
+                    "archived files are exactly what it excludes — drop "
+                    "the section, or use scope 'archive'")
+
+    def _is_archived(self, parts: tuple[str, ...]) -> bool:
+        """A walked file's parts are archived iff its first component is
+        the archive dir (#66) -- the one definition of "archived", shared
+        by the membership predicate below and every result row that
+        carries the flag."""
+        return parts[0] == self.ws.config.archive_dir
+
+    def _in_scope(self, parts: tuple[str, ...], section: str | None,
+                  scope: str) -> bool:
+        """One walked file's membership under a validated filter (#66).
+
+        section names the CONTENT section and resolves inside the
+        scope's tree(s): live files match on parts[0], archived files
+        on their mirror (parts[1]); the archive dir's own name denotes
+        the archive tree. A stray directly at Archive/*.md has no
+        mirror, so it matches whole-archive queries and no section.
+        """
+        archive = self.ws.config.archive_dir
+        archived = self._is_archived(parts)
+        if (scope == "live" and archived) or \
+                (scope == "archive" and not archived):
+            return False
+        if section is None:
+            return True
+        if section == archive:
+            return archived
+        if archived:
+            return len(parts) > 2 and parts[1] == section
+        return parts[0] == section
+
     def _canonical(self, path: str) -> Path:
         """Resolve a workspace-relative path, refusing what is not canon.
 
@@ -110,14 +161,28 @@ class WorkspaceStore:
         """One call to orient a fresh conversation: what this campaign is,
         what it holds, and what is currently live."""
         cfg = self.ws.config
-        # Counted from the same walk list_entities uses, so a count here and
-        # the list it promises cannot disagree. A bare rglob would include
-        # files inside excluded subdirectories that list_entities omits.
+        # Counted from the same walk list_entities uses, so a file inside an
+        # excluded subdirectory cannot be counted here and omitted there (a
+        # bare rglob would let the two drift). The counts are by top-level
+        # location, not by scope, so what actually holds is narrower than
+        # "agrees with list_entities": sections[X] == len(list_entities(X,
+        # scope="live")) for a live section X, and sections["Archive"] ==
+        # len(list_entities("Archive")) -- a live section's count excludes
+        # its archived mirror, which the default scope="both" would include
+        # (#66).
         counts: dict[str, int] = {}
+        archive_counts: dict[str, int] = {}
+        archive = cfg.archive_dir
         for rec in _common.iter_content_files(self.ws):
             parts = rec.path.relative_to(self.ws.root).parts
             if len(parts) > 1:
                 counts[parts[0]] = counts.get(parts[0], 0) + 1
+            # The archive breakdown applies the sections rule one level
+            # down (#66): count the mirror when there is one. A stray at
+            # Archive/*.md stays in the flat Archive total only, as root
+            # docs are absent from sections.
+            if parts[0] == archive and len(parts) > 2:
+                archive_counts[parts[1]] = archive_counts.get(parts[1], 0) + 1
         # Only directories that exist: a section the campaign has not created
         # yet is absent, not empty. Reporting it as 0 would present an unused
         # part of the layout as an emptied one.
@@ -125,6 +190,8 @@ class WorkspaceStore:
                     if (self.ws.root / d).is_dir()}
 
         out: dict = {"name": cfg.name, "sections": sections}
+        if (self.ws.root / archive).is_dir():
+            out["archive_sections"] = archive_counts
         for key, fname in (("front_burner", "front-burner.md"),
                            ("open_questions", "open-questions.md")):
             p = self.ws.root / fname
@@ -135,22 +202,29 @@ class WorkspaceStore:
         out["drafts_pending"] = len(self.list_drafts())
         return out
 
-    def list_entities(self, section: str) -> list[dict]:
-        """One section's files: workspace path, title, one-line summary.
+    def list_entities(self, section: str, scope: str = "both") -> list[dict]:
+        """One section's files: workspace path, title, one-line summary,
+        and whether the file is archived.
 
         Summaries come from front matter, where this workspace's convention
         puts a retrievable one-sentence description — which is what makes a
         listing useful to an agent that has not read the files.
+
+        section resolves inside the scope's tree(s) (#66): the default
+        "both" lists live and mirrored archived members together, each
+        row labelled, because archived names are still taken (#62's
+        collision check) and a listing that hides them invites reuse.
         """
-        self._check_section(section)
+        self._check_retrieval(section, scope)
         out = []
         for rec in _common.iter_content_files(self.ws):
             rel = rec.path.relative_to(self.ws.root)
-            if rel.parts[0] != section:
+            if not self._in_scope(rel.parts, section, scope):
                 continue
             out.append({"path": rel.as_posix(),
                         "title": rec.fm.get("title") or rec.path.stem,
-                        "summary": rec.fm.get("summary", "")})
+                        "summary": rec.fm.get("summary", ""),
+                        "archived": self._is_archived(rel.parts)})
         return out
 
     def read_entity(self, path: str) -> str:
@@ -160,23 +234,27 @@ class WorkspaceStore:
             raise StoreError(f"no such file: {path}")
         return p.read_text(encoding="utf-8")
 
-    def search(self, query: str, section: str | None = None) -> list[dict]:
+    def search(self, query: str, section: str | None = None,
+               scope: str = "both") -> list[dict]:
         """Case-insensitive substring search across content files.
 
         Deliberately literal rather than clever: an agent that can see the
         matched text decides relevance better than a ranking heuristic
         would, and a substring match is explainable when it surprises.
+
+        scope and section resolve per _in_scope (#66); every hit says
+        whether it is archived, so the caller buckets hits without
+        parsing paths.
         """
         q = query.strip().lower()
         if not q:
             raise StoreError("empty search query")
-        if section is not None:
-            self._check_section(section)
+        self._check_retrieval(section, scope)
 
         hits: list[dict] = []
         for rec in _common.iter_content_files(self.ws):
-            rel = rec.path.relative_to(self.ws.root).as_posix()
-            if section is not None and not rel.startswith(section + "/"):
+            rel = rec.path.relative_to(self.ws.root)
+            if not self._in_scope(rel.parts, section, scope):
                 continue
             text = rec.path.read_text(encoding="utf-8")
             i = text.lower().find(q)
@@ -184,13 +262,18 @@ class WorkspaceStore:
                 continue
             lo = max(0, i - SNIPPET_RADIUS)
             hi = min(len(text), i + len(q) + SNIPPET_RADIUS)
-            hits.append({"path": rel, "snippet": text[lo:hi]})
+            hits.append({"path": rel.as_posix(), "snippet": text[lo:hi],
+                         "archived": self._is_archived(rel.parts)})
             if len(hits) >= SEARCH_CAP:
                 # Say so rather than truncating silently: a capped reply that
                 # looks complete is worse than a short one that admits it.
+                # Archived hits sort first (#66), so a large archive can
+                # fill the cap before any live hit is seen -- name the
+                # scope that actually works around it, not just "narrow".
                 hits.append({"path": "", "snippet":
-                             f"(truncated at {SEARCH_CAP} hits — "
-                             "narrow the query)"})
+                             f"(truncated at {SEARCH_CAP} hits — narrow "
+                             "the query, or pass scope='live' to exclude "
+                             "archived material)"})
                 break
         return hits
 
