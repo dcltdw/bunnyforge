@@ -288,9 +288,11 @@ class TestSearch(StoreCase):
         sentinel = hits[-1]
         self.assertEqual(set(sentinel), {"path", "snippet"})
         self.assertEqual(sentinel["path"], "")
-        self.assertIn(f"truncated at {_store.SEARCH_CAP} hits",
-                      sentinel["snippet"])
-        self.assertIn("scope='live'", sentinel["snippet"])
+        self.assertEqual(
+            sentinel["snippet"],
+            f"(truncated at {_store.SEARCH_CAP} hits — live hits were "
+            "cut and archived material was not reached; narrow the "
+            "query, or add a section filter)")
 
 
 class TestScopedSearch(StoreCase):
@@ -428,6 +430,69 @@ class TestLiveFirstSearch(StoreCase):
             + [""])
         self.assertFalse(hits[0]["archived"])
         self.assertTrue(hits[2]["archived"])
+
+    def test_no_sentinel_when_the_cap_is_exactly_met(self):
+        # Pre-#71 the sentinel appeared whenever the reply reached the
+        # cap, even with nothing left to cut -- a complete reply that
+        # claimed to be truncated. Now it appears only when a 51st match
+        # exists.
+        ws = self.make_ws()
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        for i in range(_store.SEARCH_CAP - 2):
+            (arch / f"extra-{i:03d}.md").write_text(
+                f"---\ntitle: Extra {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        hits = store.search("ferry")   # exactly SEARCH_CAP matches
+        self.assertEqual(len(hits), _store.SEARCH_CAP)
+        self.assertNotEqual(hits[-1]["path"], "")
+
+    def test_sentinel_when_only_archived_hits_were_cut(self):
+        # The starved-cap case from test_cap_prefers_live_hits_over_a_
+        # larger_archive: the overflow match is archived, so every cut
+        # hit is archived and the notice names the scope that reaches
+        # them. scope='live' would be dead advice here -- under
+        # live-first, the default reply's live hits already are the
+        # scope='live' reply.
+        ws = self.make_ws()
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        for i in range(_store.SEARCH_CAP):
+            (arch / f"extra-{i:03d}.md").write_text(
+                f"---\ntitle: Extra {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        hits = store.search("ferry")
+        self.assertEqual(
+            hits[-1]["snippet"],
+            f"(truncated at {_store.SEARCH_CAP} hits — no live hits "
+            "were cut, only archived ones; narrow the query, or pass "
+            "scope='archive' to search the archive alone)")
+
+    def test_explicit_scope_sentinel_gives_no_scope_advice(self):
+        # One tree was asked for; telling the agent to change scope
+        # would contradict its own request (the shipped static text did
+        # exactly that under scope='archive').
+        ws = self.make_ws()
+        for i in range(_store.SEARCH_CAP + 1):
+            (ws.root / "NPCs" / f"live-{i:03d}.md").write_text(
+                f"---\ntitle: Live {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        arch = ws.root / "Archive" / "NPCs"
+        arch.mkdir(parents=True)
+        for i in range(_store.SEARCH_CAP + 1):
+            (arch / f"old-{i:03d}.md").write_text(
+                f"---\ntitle: Old {i}\nsummary: x\n---\nferry\n",
+                encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        for scope in ("live", "archive"):
+            hits = store.search("ferry", scope=scope)
+            self.assertEqual(
+                hits[-1]["snippet"],
+                f"(truncated at {_store.SEARCH_CAP} hits — narrow the "
+                "query, or add a section filter)",
+                scope)
 
 
 class TestScopedListEntities(StoreCase):

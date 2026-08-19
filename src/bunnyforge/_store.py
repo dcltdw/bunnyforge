@@ -250,6 +250,10 @@ class WorkspaceStore:
         archived hit, path order within each tree -- so a capped reply
         keeps current material. That ordering is the whole promise;
         relevance stays the caller's job.
+
+        A truncated reply ends with a sentinel row that says which
+        tree the cut hits came from; a reply that exactly fills the
+        cap with nothing left over gets no sentinel.
         """
         q = query.strip().lower()
         if not q:
@@ -275,20 +279,34 @@ class WorkspaceStore:
             i = text.lower().find(q)
             if i == -1:
                 continue
+            if len(hits) >= SEARCH_CAP:
+                # This match is the 51st, so the reply is genuinely
+                # truncated -- a reply of exactly SEARCH_CAP matches gets
+                # no sentinel, because nothing was cut. Say what WAS cut:
+                # live sorts first (#71), so an archived overflow match
+                # means every remaining match is archived too, while a
+                # live one means live material itself overflowed. Under
+                # an explicit single-tree scope there is no scope advice
+                # to give -- the shipped static text used to recommend
+                # scope='live' even to a scope='archive' caller.
+                if scope != "both":
+                    advice = "narrow the query, or add a section filter"
+                elif self._is_archived(rel.parts):
+                    advice = ("no live hits were cut, only archived "
+                              "ones; narrow the query, or pass "
+                              "scope='archive' to search the archive "
+                              "alone")
+                else:
+                    advice = ("live hits were cut and archived material "
+                              "was not reached; narrow the query, or "
+                              "add a section filter")
+                hits.append({"path": "", "snippet":
+                             f"(truncated at {SEARCH_CAP} hits — {advice})"})
+                break
             lo = max(0, i - SNIPPET_RADIUS)
             hi = min(len(text), i + len(q) + SNIPPET_RADIUS)
             hits.append({"path": rel.as_posix(), "snippet": text[lo:hi],
                          "archived": self._is_archived(rel.parts)})
-            if len(hits) >= SEARCH_CAP:
-                # Say so rather than truncating silently: a capped reply that
-                # looks complete is worse than a short one that admits it.
-                # Live sorts first (#71), so what survived the cap is the
-                # current material.
-                hits.append({"path": "", "snippet":
-                             f"(truncated at {SEARCH_CAP} hits — narrow "
-                             "the query, or pass scope='live' to exclude "
-                             "archived material)"})
-                break
         return hits
 
     # -- generators ---------------------------------------------------------
