@@ -1,6 +1,8 @@
 import contextlib
 import importlib.util
 import io
+import logging
+import logging.config
 import os
 import tempfile
 import unittest
@@ -119,24 +121,56 @@ class TestLogConfig(unittest.TestCase):
         self.assertEqual(h["backupCount"], 14)
         self.assertEqual(h["filename"], "/tmp/mcp.log")
 
+    def _detach_uvicorn_loggers(self):
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+            logger.propagate = True
+            logger.setLevel(logging.NOTSET)
+
     def test_dict_is_valid_dictconfig(self):
         # A wiring assertion can pass on a malformed dict; only
         # dictConfig itself proves the schema. Built against a tmpdir
         # because the rotating handler opens its file eagerly.
-        import logging
-        import logging.config
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        logging.config.dictConfig(serve_mcp._log_config(root / "mcp.log"))
         try:
+            logging.config.dictConfig(
+                serve_mcp._log_config(root / "mcp.log"))
             self.assertTrue(logging.getLogger("uvicorn.access").handlers)
             self.assertTrue((root / "mcp.log").exists())
         finally:
-            for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-                logger = logging.getLogger(name)
-                for handler in list(logger.handlers):
-                    handler.close()
-                    logger.removeHandler(handler)
-                logger.propagate = True
+            self._detach_uvicorn_loggers()
+
+    def test_access_lines_reach_the_file_and_not_the_terminal(self):
+        # The behavioral guarantee, not just the wiring: delete
+        # "propagate": False from the uvicorn.access entry and access
+        # lines propagate up to uvicorn's [file, stderr] handlers, so
+        # they land in the terminal and are written to the file twice
+        # -- while every handler-list assertion above still passes.
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        log = root / "mcp.log"
+        err = io.StringIO()
+        try:
+            # redirect_stderr wraps dictConfig, not the other way round:
+            # ext://sys.stderr resolves to whatever sys.stderr IS at
+            # configure time, so the handler must be configured while
+            # already redirected or it binds to the real terminal stream
+            # forever, silently uncaptured (confirmed empirically).
+            with contextlib.redirect_stderr(err):
+                logging.config.dictConfig(serve_mcp._log_config(log))
+                logging.getLogger("uvicorn.access").info(
+                    '%s - "%s %s HTTP/%s" %d', "1.2.3.4:0", "POST", "/mcp",
+                    "1.1", 200)
+                logging.getLogger("uvicorn.error").info("bind failed")
+            for handler in logging.getLogger("uvicorn.access").handlers:
+                handler.flush()
+        finally:
+            self._detach_uvicorn_loggers()
+        self.assertIn('"POST /mcp HTTP/1.1" 200', log.read_text())
+        self.assertNotIn("POST /mcp", err.getvalue())
+        self.assertIn("bind failed", err.getvalue())
 
 
 @unittest.skipUnless(HAVE_MCP, "needs the mcp extra")
@@ -223,7 +257,19 @@ class TestStartupContract(unittest.TestCase):
                              {"uvicorn": mock.MagicMock()}):
             rc, err = self._main(["--no-auth", "--log-file", str(target)])
         self.assertEqual(rc, 1)
-        self.assertIn("log directory", err)
+        self.assertIn("cannot write log file", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_log_file_refuses_a_directory_as_the_target(self):
+        # mkdir(exist_ok=True) sails past a target that is itself a
+        # directory; only opening the file catches it, and it must be a
+        # refusal line rather than a traceback out of dictConfig.
+        target = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.dict("sys.modules",
+                             {"uvicorn": mock.MagicMock()}):
+            rc, err = self._main(["--no-auth", "--log-file", str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot write log file", err)
         self.assertNotIn("Traceback", err)
 
 

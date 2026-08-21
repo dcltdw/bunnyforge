@@ -18,9 +18,10 @@ starts a fresh one.
 ### Added
 
 - `bunnyforge serve-mcp --log-file [PATH]` routes uvicorn's logs to a
-  self-pruning file (rotated at midnight, 14 days kept) instead of
-  cluttering the terminal with access lines; errors still reach stderr
-  too. Bare `--log-file` picks a platform default:
+  self-pruning file (rotated at midnight, 14 rotated days kept
+  alongside the live one) instead of cluttering the terminal with
+  access lines; errors still reach stderr too. Bare `--log-file` picks
+  a platform default:
   `~/Library/Logs/bunnyforge/mcp.log` on macOS,
   `$XDG_STATE_HOME/bunnyforge/mcp.log` elsewhere. (#87)
 

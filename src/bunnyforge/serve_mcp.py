@@ -269,7 +269,11 @@ def _log_config(path: Path) -> dict:
     rotating handlers on the same file would both attempt the rollover
     rename and collide. The formatter adds timestamps, which uvicorn's
     stderr default lacks; access lines render fine through it because
-    the request line lives in the record's message/args.
+    the request line lives in the record's message/args. Named
+    `timestamped` rather than uvicorn's own `default`/`access` formatter
+    names, so passing `use_colors=` to `uvicorn.run` would raise
+    `KeyError: 'default'` in uvicorn's `Config.configure_logging` —
+    unreachable today since serve_mcp never passes it.
     """
     return {
         "version": 1,
@@ -555,9 +559,9 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
         log_path = Path(args.log_file).expanduser()
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.open("a").close()
         except OSError as exc:
-            print(f"cannot create log directory {log_path.parent}: {exc}",
-                  file=sys.stderr)
+            print(f"cannot write log file {log_path}: {exc}", file=sys.stderr)
             return 1
 
     # --public-host does double duty: it names the OAuth issuer, and it
@@ -589,7 +593,7 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
     print(f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp "
           f"(OAuth issuer: {issuer})" if key else
           f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp")
-    if log_path:
+    if log_path is not None:
         print(f"access log: {log_path} (rotated at midnight, 14 kept)")
         uvicorn.run(app, host=args.host, port=args.port,
                     log_config=_log_config(log_path))
