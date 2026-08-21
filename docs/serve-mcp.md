@@ -18,6 +18,8 @@ command; see "One command" at the end.
 
 Keep it out of git. You will type it exactly once per grant, on the
 consent page in your own browser — it is never stored by claude.ai.
+For unattended starts, `--auth-key-file` reads it from a private
+file instead.
 
 ## Run behind a tunnel
 

@@ -325,12 +325,41 @@ class TestAuthKeyFile(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "chmod 600"):
             self._resolve(["--auth-key-file", str(path)])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_directory_is_a_refusal_without_chmod_advice(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        root.chmod(0o755)
+        with self.assertRaisesRegex(ValueError,
+                                    "cannot read auth key file") as ctx:
+            self._resolve(["--auth-key-file", str(root)])
+        self.assertNotIn("chmod 600", str(ctx.exception))
+
+    def test_non_utf8_file_is_a_refusal(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = root / "mcp-key"
+        path.write_bytes(b"\xff\xfe")
+        path.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "not valid UTF-8") as ctx:
+            self._resolve(["--auth-key-file", str(path)])
+        self.assertIn(str(path), str(ctx.exception))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX home expansion")
+    def test_expands_a_leading_tilde(self):
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = home / "mcp-key"
+        path.write_text("tildekey\n", encoding="utf-8")
+        path.chmod(0o600)
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertEqual(
+                self._resolve(["--auth-key-file", "~/mcp-key"]),
+                "tildekey")
+
     def test_both_key_flags_together_are_ambiguous(self):
         path = self._keyfile()
         with self.assertRaisesRegex(ValueError, "contradicts"):
             self._resolve(["--auth-key", "k", "--auth-key-file", str(path)])
 
-    def test_auth_key_flag_wins_without_reading_the_file(self):
+    def test_auth_key_resolves(self):
         self.assertEqual(self._resolve(["--auth-key", "k"]), "k")
 
     def test_file_outranks_the_environment(self):

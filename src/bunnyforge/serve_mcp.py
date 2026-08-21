@@ -318,22 +318,28 @@ def _read_key_file(path_str: str) -> str:
     """
     path = Path(path_str).expanduser()
     try:
-        if os.name == "posix":
-            mode = stat.S_IMODE(path.stat().st_mode)
-            if mode & 0o077:
-                raise ValueError(
-                    f"auth key file {path} is group- or other-accessible "
-                    f"(mode {mode:03o}) -- chmod 600 it")
+        # I/O first, so a directory lands on IsADirectoryError rather
+        # than the mode check, whose chmod 600 advice would break it.
         raw = path.read_text(encoding="utf-8")
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except UnicodeDecodeError:
+        # Never interpolate the codec error: it quotes a byte of the key.
+        raise ValueError(
+            f"auth key file {path} is not valid UTF-8") from None
     except OSError as exc:
         raise ValueError(f"cannot read auth key file: {exc}") from None
+    # POSIX only; the group/other bits are fiction elsewhere.
+    if os.name == "posix" and mode & 0o077:
+        raise ValueError(
+            f"auth key file {path} is group- or other-accessible "
+            f"(mode {mode:03o}) -- chmod 600 it")
     key = raw.strip()
     if not key:
         raise ValueError(f"auth key file {path} is empty")
     return key
 
 
-def _resolve_key(args) -> str:
+def _resolve_key(args: argparse.Namespace) -> str:
     """--auth-key, else --auth-key-file, else $BUNNYFORGE_MCP_KEY.
 
     The two flags together are refused as ambiguous rather than
@@ -607,9 +613,9 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
               f"{KEY_ENV}; pick one", file=sys.stderr)
         return EXIT_CONFIG
     if not key and not args.no_auth:
-        print("refusing to start without auth: pass --auth-key, set "
-              f"{KEY_ENV}, or (local testing only) pass --no-auth",
-              file=sys.stderr)
+        print("refusing to start without auth: pass --auth-key or "
+              f"--auth-key-file, set {KEY_ENV}, or (local testing "
+              "only) pass --no-auth", file=sys.stderr)
         return EXIT_CONFIG
 
     log_path = None
