@@ -181,10 +181,14 @@ tunnel's plist. `--auth-key-file` reads it, strips a trailing newline,
 and refuses an empty or group/other-readable file.
 
 1. **Put the key in a file.** Any path works; this one sits beside the
-   OAuth state file that "Resetting access" already covers:
+   OAuth state file that "Resetting access" already covers. The
+   `umask` matters here: a bare redirect creates the file under your
+   shell's default mode (often `644`) and it sits world-readable until
+   `chmod` runs a line later — exactly the condition `--auth-key-file`
+   refuses.
 
         mkdir -p ~/.local/state/bunnyforge
-        printf '%s\n' '<your key>' > ~/.local/state/bunnyforge/mcp-key
+        (umask 077; printf '%s\n' '<your key>' > ~/.local/state/bunnyforge/mcp-key)
         chmod 600 ~/.local/state/bunnyforge/mcp-key
 
 2. **Create the log directory** — launchd does not create the parents
@@ -239,11 +243,23 @@ and refuses an empty or group/other-readable file.
    `--log-file` carries the request volume to
    `~/Library/Logs/bunnyforge/mcp.log`, rotated at midnight, 14 days
    kept. The launchd log carries only what that file structurally
-   cannot: the startup banner, the one-line refusals printed before
-   any logging exists, and crash tracebacks. It is unrotated, but it
-   receives no access lines, so it stays small.
+   cannot: the one-line refusals printed before any logging exists,
+   and crash tracebacks. It is unrotated, but it receives no access
+   lines, so it stays small. The startup banner itself is not among
+   these — it is a plain `print()` to stdout, launchd redirects
+   stdout to this same file, and a file (unlike a terminal) makes
+   Python block-buffer it; the process then blocks inside
+   `uvicorn.run()` indefinitely, so that buffer never flushes and the
+   banner never lands here at all. Uvicorn's own `Uvicorn running
+   on …` line does — it goes to stderr, which is line-buffered — and
+   is the signal a healthy start actually leaves behind.
 
-4. **Load it:**
+4. **Quit any by-hand `serve-mcp` first, then load it.** The agent
+   binds the same port 8765; while a hand-run server — from "Run
+   behind a tunnel," or from proving the path by hand when setting up
+   the tunnel — still holds it, the agent's own start fails, and the
+   next step's `--check` still *passes*, because the hand-run server
+   is the one answering it.
 
         launchctl load ~/Library/LaunchAgents/com.bunnyforge.serve-mcp.plist
 
@@ -254,13 +270,16 @@ and refuses an empty or group/other-readable file.
 
    A real PID in the first column and a passing check means done. A
    `-` with `78` beside it is a **refusal**: the configuration is
-   wrong, restarting will not help, and the last line of
+   wrong, restarting will not help, and
    `~/Library/Logs/bunnyforge/serve-mcp.launchd.log` names the fix — a
    bad workspace path, a key file that is missing or too open, a
    `bunnyforge` without the `[mcp]` extra. Any other nonzero status is
-   a crash. `KeepAlive` restarts crashes within a minute; refusals it
-   retries at most once a minute (`ThrottleInterval`), so a broken
-   config surfaces here and in the log instead of spinning every five
+   usually a crash, but the likeliest one here is not: something else
+   — most often a hand-run `serve-mcp` you forgot to quit — already
+   holds port 8765, and the agent exits 1 trying to bind it.
+   `KeepAlive` restarts crashes within a minute; refusals it retries
+   at most once a minute (`ThrottleInterval`), so a broken config
+   surfaces here and in the log instead of spinning every five
    seconds — the loop step 7 warns about.
 
    After editing the plist, `launchctl unload` then `load` again.
@@ -400,7 +419,9 @@ players even by accident.
 
 ## Resetting access
 
-Delete the token state file and restart the server:
+Delete the token state file and restart the server (as a launch agent:
+`launchctl kickstart -k gui/$(id -u)/com.bunnyforge.serve-mcp`, or
+unload then load):
 
     rm ~/.local/state/bunnyforge/mcp-oauth-state.json
 
@@ -440,6 +461,9 @@ to its own `server.log`; it needs no flag and is unchanged.
 - **502 from the public hostname:** the tunnel is up and the server is
   not, or the server is on a port the `ingress` rule does not name. Start
   `serve-mcp`; check the port in `~/.cloudflared/config.yml` matches.
+  Running it as a launch agent instead? Don't start it by hand — see
+  "Make the server start on its own" above: `launchctl list`, a `78`
+  exit, and the launchd log are the first three things to check.
 - **421 Invalid Host header through a tunnel:** DNS-rebinding protection
   does not know your public hostname. Pass `--public-host <hostname>` —
   the same hostname the tunnel serves, with no scheme and no port. The
