@@ -19,7 +19,7 @@ command; see "One command" at the end.
 Keep it out of git. You will type it exactly once per grant, on the
 consent page in your own browser — it is never stored by claude.ai.
 For unattended starts, `--auth-key-file` reads it from a private
-file instead.
+file — the launch agent recipe below leans on that.
 
 ## Run behind a tunnel
 
@@ -155,7 +155,8 @@ Two things this deliberately does not do.
 
 **Starting the tunnel does not start `serve-mcp`.** The tunnel is the
 route; the server is still yours to run. Until it is up the hostname
-answers `502`, which is the correct answer rather than a fault.
+answers `502`, which is the correct answer rather than a fault. The
+next section closes the asymmetry.
 
 **Do not put Cloudflare Access in front of the hostname.** The instinct
 is a good one — everything served is GM-only — but the mechanism is
@@ -163,6 +164,114 @@ wrong: claude.ai has to complete this server's own OAuth flow against
 that URL, and it cannot log through an Access challenge to get there.
 The authentication is already present in the GM key and the OAuth
 grant, without which the server refuses to start.
+
+## Make the server start on its own (macOS)
+
+Step 6 got the tunnel a launch agent; this section gives `serve-mcp`
+one of its own, so neither end of the route depends on a terminal
+window staying open. The same trap applies: a launch agent starts **at
+login, not at boot**.
+
+One decision shapes the recipe: the GM key. A plist is not a secrets
+store — it is readable by every process running as you, echoed by
+`launchctl print`, and the first file you paste somewhere when
+debugging — so the key goes in a private file and the plist carries
+only its path, the same trust class as the `config.yml` path in the
+tunnel's plist. `--auth-key-file` reads it, strips a trailing newline,
+and refuses an empty or group/other-readable file.
+
+1. **Put the key in a file.** Any path works; this one sits beside the
+   OAuth state file that "Resetting access" already covers:
+
+        mkdir -p ~/.local/state/bunnyforge
+        printf '%s\n' '<your key>' > ~/.local/state/bunnyforge/mcp-key
+        chmod 600 ~/.local/state/bunnyforge/mcp-key
+
+2. **Create the log directory** — launchd does not create the parents
+   of its log paths:
+
+        mkdir -p ~/Library/Logs/bunnyforge
+
+3. **Write `~/Library/LaunchAgents/com.bunnyforge.serve-mcp.plist`.**
+   Every path must be absolute: launchd expands no `~` and reads no
+   shell profile — which is also why the workspace travels as
+   `--workspace` rather than `$BUNNYFORGE_WORKSPACE`, and why there is
+   no `EnvironmentVariables` block at all. The first string is the
+   `bunnyforge` that has the `[mcp]` extra: `which bunnyforge` from
+   the shell where `serve-mcp` already runs by hand.
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>com.bunnyforge.serve-mcp</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/absolute/path/to/bunnyforge</string>
+                <string>serve-mcp</string>
+                <string>--workspace</string>
+                <string>/absolute/path/to/campaign</string>
+                <string>--public-host</string>
+                <string>mcp.example.com</string>
+                <string>--auth-key-file</string>
+                <string>/Users/you/.local/state/bunnyforge/mcp-key</string>
+                <string>--log-file</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <dict>
+                <key>SuccessfulExit</key>
+                <false/>
+            </dict>
+            <key>ThrottleInterval</key>
+            <integer>60</integer>
+            <key>StandardOutPath</key>
+            <string>/Users/you/Library/Logs/bunnyforge/serve-mcp.launchd.log</string>
+            <key>StandardErrorPath</key>
+            <string>/Users/you/Library/Logs/bunnyforge/serve-mcp.launchd.log</string>
+        </dict>
+        </plist>
+
+   Two log destinations on purpose, doing different work. Bare
+   `--log-file` carries the request volume to
+   `~/Library/Logs/bunnyforge/mcp.log`, rotated at midnight, 14 days
+   kept. The launchd log carries only what that file structurally
+   cannot: the startup banner, the one-line refusals printed before
+   any logging exists, and crash tracebacks. It is unrotated, but it
+   receives no access lines, so it stays small.
+
+4. **Load it:**
+
+        launchctl load ~/Library/LaunchAgents/com.bunnyforge.serve-mcp.plist
+
+5. **Check that it actually starts** — step 7's discipline, unchanged:
+
+        launchctl list | grep com.bunnyforge.serve-mcp
+        bunnyforge serve-mcp --check https://mcp.example.com
+
+   A real PID in the first column and a passing check means done. A
+   `-` with `78` beside it is a **refusal**: the configuration is
+   wrong, restarting will not help, and the last line of
+   `~/Library/Logs/bunnyforge/serve-mcp.launchd.log` names the fix — a
+   bad workspace path, a key file that is missing or too open, a
+   `bunnyforge` without the `[mcp]` extra. Any other nonzero status is
+   a crash. `KeepAlive` restarts crashes within a minute; refusals it
+   retries at most once a minute (`ThrottleInterval`), so a broken
+   config surfaces here and in the log instead of spinning every five
+   seconds — the loop step 7 warns about.
+
+   After editing the plist, `launchctl unload` then `load` again.
+   Step 7's two traps apply verbatim: `unload` can report
+   `Input/output error` having succeeded, and `sudo` addresses the
+   wrong domain entirely.
+
+One conflict worth knowing: the agent and `scripts/mcp-session.py`
+both want port 8765. While the agent is loaded, an mcp-session's
+server cannot bind — `launchctl unload` the agent first when you want
+the interactive route back.
 
 ## Check it before adding the connector
 
