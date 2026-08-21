@@ -51,7 +51,8 @@ class TestMainGuards(unittest.TestCase):
 
     def test_bad_workspace_is_one_error_line_not_a_traceback(self):
         empty = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.assertEqual(serve_mcp.main(["--workspace", str(empty)]), 1)
+        self.assertEqual(serve_mcp.main(["--workspace", str(empty)]),
+                         serve_mcp.EXIT_CONFIG)
 
 
 class TestLogFileFlag(unittest.TestCase):
@@ -224,20 +225,20 @@ class TestStartupContract(unittest.TestCase):
 
     def test_refuses_without_key_or_no_auth(self):
         rc, err = self._main([])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
         self.assertIn("--auth-key", err)
         self.assertIn("BUNNYFORGE_MCP_KEY", err)
         self.assertIn("--no-auth", err)
 
     def test_refuses_key_and_no_auth_together(self):
         rc, err = self._main(["--auth-key", "k", "--no-auth"])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
         self.assertIn("contradict", err)
 
     def test_env_key_counts_as_key_for_the_contradiction(self):
         with mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": "k"}):
             rc, err = self._main(["--no-auth"])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
         self.assertIn("contradict", err)
 
     def test_token_flag_is_gone(self):
@@ -256,7 +257,7 @@ class TestStartupContract(unittest.TestCase):
         with mock.patch.dict("sys.modules",
                              {"uvicorn": mock.MagicMock()}):
             rc, err = self._main(["--no-auth", "--log-file", str(target)])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
         self.assertIn("cannot write log file", err)
         self.assertNotIn("Traceback", err)
 
@@ -268,9 +269,13 @@ class TestStartupContract(unittest.TestCase):
         with mock.patch.dict("sys.modules",
                              {"uvicorn": mock.MagicMock()}):
             rc, err = self._main(["--no-auth", "--log-file", str(target)])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
         self.assertIn("cannot write log file", err)
         self.assertNotIn("Traceback", err)
+
+    def test_refusal_exit_code_is_ex_config(self):
+        # sysexits(3) EX_CONFIG; a service manager keys on the number.
+        self.assertEqual(serve_mcp.EXIT_CONFIG, 78)
 
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")

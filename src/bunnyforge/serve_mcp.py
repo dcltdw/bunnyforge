@@ -38,6 +38,11 @@ from bunnyforge._store import StoreError, WorkspaceStore
 
 KEY_ENV = "BUNNYFORGE_MCP_KEY"
 
+# sysexits(3) EX_CONFIG: a startup refusal. The configuration is wrong
+# and restarting cannot fix it, so a service manager (or a human reading
+# `launchctl list`) can tell it from a crash, which stays exit 1 (#93).
+EXIT_CONFIG = 78
+
 # Workspace doctrine, offered as MCP resources so a fresh conversation can
 # load the house rules before it writes anything. Absent files are simply
 # not listed -- which is also what makes campaign-doctrine.md safe to add
@@ -541,18 +546,18 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
         ws = _config.resolve_workspace(args.workspace)
     except (ConfigError, WorkspaceError) as exc:
         print(exc, file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
     key = (args.auth_key or os.environ.get(KEY_ENV, "")).strip()
     if key and args.no_auth:
         print(f"--no-auth contradicts --auth-key/{KEY_ENV}; pick one",
               file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
     if not key and not args.no_auth:
         print("refusing to start without auth: pass --auth-key, set "
               f"{KEY_ENV}, or (local testing only) pass --no-auth",
               file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
     log_path = None
     if args.log_file is not None:
@@ -562,7 +567,7 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
             log_path.open("a").close()
         except OSError as exc:
             print(f"cannot write log file {log_path}: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_CONFIG
 
     # --public-host does double duty: it names the OAuth issuer, and it
     # declares the hostname to DNS-rebinding protection in build_app (#46).
@@ -584,7 +589,7 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
                               oauth=oauth)
     except ModuleNotFoundError:
         print(_INSTALL_HINT, file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
     app = build_app(server, public_host=args.public_host)
     if not key:
