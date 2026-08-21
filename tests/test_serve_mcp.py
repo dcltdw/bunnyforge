@@ -89,6 +89,56 @@ class TestLogFileFlag(unittest.TestCase):
                 Path.home() / ".local" / "state" / "bunnyforge" / "mcp.log")
 
 
+class TestLogConfig(unittest.TestCase):
+    """The dict handed to uvicorn: access to file only, errors to both."""
+
+    def setUp(self):
+        self.cfg = serve_mcp._log_config(Path("/tmp/mcp.log"))
+
+    def test_access_goes_to_file_only(self):
+        self.assertEqual(self.cfg["loggers"]["uvicorn.access"]["handlers"],
+                         ["file"])
+
+    def test_errors_go_to_file_and_stderr(self):
+        self.assertEqual(self.cfg["loggers"]["uvicorn.error"]["handlers"],
+                         ["file", "stderr"])
+        self.assertEqual(self.cfg["loggers"]["uvicorn"]["handlers"],
+                         ["file", "stderr"])
+
+    def test_one_rotating_file_handler_midnight_keep_14(self):
+        # ONE file handler on purpose: two rotating handlers on the same
+        # file would both attempt the rollover rename and collide.
+        handlers = self.cfg["handlers"]
+        file_handlers = [h for h in handlers.values()
+                         if "filename" in h]
+        self.assertEqual(len(file_handlers), 1)
+        h = handlers["file"]
+        self.assertEqual(
+            h["class"], "logging.handlers.TimedRotatingFileHandler")
+        self.assertEqual(h["when"], "midnight")
+        self.assertEqual(h["backupCount"], 14)
+        self.assertEqual(h["filename"], "/tmp/mcp.log")
+
+    def test_dict_is_valid_dictconfig(self):
+        # A wiring assertion can pass on a malformed dict; only
+        # dictConfig itself proves the schema. Built against a tmpdir
+        # because the rotating handler opens its file eagerly.
+        import logging
+        import logging.config
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        logging.config.dictConfig(serve_mcp._log_config(root / "mcp.log"))
+        try:
+            self.assertTrue(logging.getLogger("uvicorn.access").handlers)
+            self.assertTrue((root / "mcp.log").exists())
+        finally:
+            for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+                logger = logging.getLogger(name)
+                for handler in list(logger.handlers):
+                    handler.close()
+                    logger.removeHandler(handler)
+                logger.propagate = True
+
+
 class TestStartupContract(unittest.TestCase):
     """Default-deny: the spec's startup matrix, refusal rows.
 

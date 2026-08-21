@@ -262,6 +262,42 @@ def _default_log_path() -> Path:
     return base / "bunnyforge" / "mcp.log"
 
 
+def _log_config(path: Path) -> dict:
+    """uvicorn log_config: access lines to a rotated file, errors to both.
+
+    One TimedRotatingFileHandler shared by every uvicorn logger — two
+    rotating handlers on the same file would both attempt the rollover
+    rename and collide. The formatter adds timestamps, which uvicorn's
+    stderr default lacks; access lines render fine through it because
+    the request line lives in the record's message/args.
+    """
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "timestamped": {
+                "format": "%(asctime)s %(levelname)s %(message)s"}},
+        "handlers": {
+            "file": {
+                "class": "logging.handlers.TimedRotatingFileHandler",
+                "filename": str(path),
+                "when": "midnight",
+                "backupCount": 14,
+                "formatter": "timestamped"},
+            "stderr": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+                "formatter": "timestamped"}},
+        "loggers": {
+            "uvicorn": {"handlers": ["file", "stderr"],
+                        "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["file", "stderr"],
+                              "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["file"],
+                               "level": "INFO", "propagate": False}},
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bunnyforge serve-mcp",
