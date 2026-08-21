@@ -51,6 +51,12 @@ starts a fresh one.
   --help` into the test suite's output — which since #87 included the
   running machine's home directory, by way of the `--log-file` default
   path. (#92)
+- `docs/serve-mcp.md` no longer claims an mcp-session "cannot bind"
+  while the launch agent holds port 8765. It stops the agent's server
+  instead — and because that is a SIGTERM, the exit is clean and
+  `KeepAlive` leaves it down, silently. The page now says so, offers
+  `--port` as the conflict-free route, and names `launchctl kickstart`
+  as the way back. (#99)
 - `docs/serve-mcp.md`'s Logging section no longer lists the startup
   banner among the things that reach stderr. It goes to stdout, which
   under a launch agent is a block-buffered file the server never gets

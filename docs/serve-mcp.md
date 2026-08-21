@@ -287,10 +287,25 @@ and refuses an empty or group/other-readable file.
    `Input/output error` having succeeded, and `sudo` addresses the
    wrong domain entirely.
 
-One conflict worth knowing: the agent and `scripts/mcp-session.py`
-both want port 8765. While the agent is loaded, an mcp-session's
-server cannot bind — `launchctl unload` the agent first when you want
-the interactive route back.
+One conflict worth knowing, and it is sharper than it looks: the
+agent and `scripts/mcp-session.py` both default to port 8765. The
+mcp-session does not politely fail to bind — it stops whatever
+`serve-mcp` is holding the port, which is your agent's server, and
+says so in one line. Worse, that stop is a SIGTERM, so the exit is a
+clean `0`, and `KeepAlive` is `{SuccessfulExit: false}` precisely so
+clean exits stay down. Your agent is then off with nothing in the
+launchd log to say why — a graceful shutdown is not a refusal.
+
+Give the mcp-session its own port instead, which `--port` passes to
+both the quick tunnel and the server:
+
+    scripts/mcp-session.py --port 8766 --verify
+
+That leaves the agent untouched. If you would rather have the port
+back, `launchctl unload` the agent first — deliberate, and equally
+fine. To restore an agent an mcp-session already stopped:
+
+    launchctl kickstart -k gui/$(id -u)/com.bunnyforge.serve-mcp
 
 ## Check it before adding the connector
 
