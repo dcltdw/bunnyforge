@@ -32,6 +32,14 @@ it anchors the OAuth issuer, and it declares the hostname to the
 server's DNS-rebinding protection. Omit it and every tunnelled request
 is refused with `421` before it reaches authentication.
 
+Note what the command above does *not* say: which campaign to serve.
+`serve-mcp` takes `--workspace`, else `$BUNNYFORGE_WORKSPACE`, else the
+nearest `campaign.toml` at or above the current directory — so run from
+inside the campaign, or name it. **`$BUNNYFORGE_MCP_WORKSPACE` is a
+different variable**, read only by `scripts/mcp-session.py` (below);
+setting it does nothing for `serve-mcp` itself, which then refuses to
+start unless you happen to be standing in a campaign folder.
+
 A **named tunnel** (free with a Cloudflare-managed domain) is the
 recommended recipe: the hostname — and therefore the connector URL in
 claude.ai and the OAuth trust it anchors — survives restarts. Creating
@@ -105,6 +113,43 @@ free, and once it is done the hostname is permanent.
    system service and does need `sudo`. Note what a launch agent does
    not do: it starts **at login, not at boot**, so a machine that
    reboots with nobody logging in comes back without a tunnel.
+
+7. **Check that it actually starts.** Do not skip this — the way it
+   fails is silent.
+
+        launchctl list | grep cloudflared
+        cloudflared tunnel list
+
+   You want a real PID in the first column and a populated CONNECTIONS
+   column. A `-` with status `1` means the agent is failing: cloudflared
+   2026.8.2 has been seen generating a plist whose `ProgramArguments`
+   is the bare binary with no subcommand, which prints usage, exits 1,
+   and — with the `KeepAlive` the same command generates — retries
+   every five seconds forever.
+   `~/Library/Logs/com.cloudflare.cloudflared.err.log` says so:
+   ``use `cloudflared tunnel run` to start tunnel <name>``.
+
+   The repair is to supply the arguments yourself, in
+   `~/Library/LaunchAgents/com.cloudflare.cloudflared.plist`:
+
+        <key>ProgramArguments</key>
+        <array>
+            <string>/usr/local/bin/cloudflared</string>
+            <string>--config</string>
+            <string>/absolute/path/to/.cloudflared/config.yml</string>
+            <string>--no-autoupdate</string>
+            <string>tunnel</string>
+            <string>run</string>
+            <string>bunnyforge-mcp</string>
+        </array>
+
+   Then `launchctl unload` the plist and `launchctl load` it again, and
+   re-run the two checks. Two traps on the way: `unload` can report
+   `Input/output error` having nonetheless succeeded — confirm with
+   `launchctl print gui/$(id -u)/com.cloudflare.cloudflared`, which
+   should then say the service is not found — and `sudo` is wrong here,
+   because it addresses the system domain and cannot see a user launch
+   agent.
 
 Two things this deliberately does not do.
 
@@ -311,7 +356,11 @@ Export `BUNNYFORGE_MCP_WORKSPACE` from your shell profile and it needs no
 arguments at all — the workspace comes from `--workspace`, else that
 variable, else the `DEFAULT_WORKSPACE` constant near the top of the
 script. Prefer the variable: it survives `git pull` without leaving a
-local edit in `git status` forever. Other flags: `--fresh` (drop every registered client and
+local edit in `git status` forever. This variable belongs to *this
+script only*; `bunnyforge serve-mcp` run directly does not read it and
+wants `$BUNNYFORGE_WORKSPACE` instead. Setting both, to the same
+path, is the arrangement that behaves the way you expect from either
+entry point. Other flags: `--fresh` (drop every registered client and
 token first), `--status`, `--down`, `--port`, `--bunnyforge` (the console
 script that has the `[mcp]` extra, if it is not on your PATH).
 

@@ -45,8 +45,9 @@ class TestMainGuards(unittest.TestCase):
         return root
 
     def test_help_works_without_the_extra(self):
-        with self.assertRaises(SystemExit) as ctx:
-            serve_mcp.main(["--help"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                serve_mcp.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
 
     def test_bad_workspace_is_one_error_line_not_a_traceback(self):
