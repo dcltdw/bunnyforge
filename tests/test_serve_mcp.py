@@ -278,6 +278,91 @@ class TestStartupContract(unittest.TestCase):
         self.assertEqual(serve_mcp.EXIT_CONFIG, 78)
 
 
+class TestAuthKeyFile(unittest.TestCase):
+    """--auth-key-file: the key a plist can point at (#93).
+
+    Bare Python throughout: resolution and every refusal fire before
+    any SDK import.
+    """
+
+    def setUp(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"BUNNYFORGE_MCP_KEY": ""}))
+
+    def _keyfile(self, content="sekrit\n", mode=0o600) -> Path:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = root / "mcp-key"
+        path.write_text(content, encoding="utf-8")
+        path.chmod(mode)
+        return path
+
+    def _resolve(self, argv):
+        args = serve_mcp.build_parser().parse_args(argv)
+        return serve_mcp._resolve_key(args)
+
+    def _ws(self) -> Path:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / "campaign.toml").write_text(MINIMAL, encoding="utf-8")
+        return root
+
+    def test_reads_and_strips_the_key(self):
+        path = self._keyfile("  sekrit\n")
+        self.assertEqual(
+            self._resolve(["--auth-key-file", str(path)]), "sekrit")
+
+    def test_missing_file_is_a_refusal(self):
+        with self.assertRaisesRegex(ValueError, "cannot read"):
+            self._resolve(["--auth-key-file", "/nonexistent/mcp-key"])
+
+    def test_empty_file_is_a_refusal(self):
+        path = self._keyfile("   \n")
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self._resolve(["--auth-key-file", str(path)])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_group_or_other_readable_is_a_refusal(self):
+        path = self._keyfile(mode=0o644)
+        with self.assertRaisesRegex(ValueError, "chmod 600"):
+            self._resolve(["--auth-key-file", str(path)])
+
+    def test_both_key_flags_together_are_ambiguous(self):
+        path = self._keyfile()
+        with self.assertRaisesRegex(ValueError, "contradicts"):
+            self._resolve(["--auth-key", "k", "--auth-key-file", str(path)])
+
+    def test_auth_key_flag_wins_without_reading_the_file(self):
+        self.assertEqual(self._resolve(["--auth-key", "k"]), "k")
+
+    def test_file_outranks_the_environment(self):
+        path = self._keyfile("filekey\n")
+        with mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": "envkey"}):
+            self.assertEqual(
+                self._resolve(["--auth-key-file", str(path)]), "filekey")
+
+    def test_environment_still_answers_when_no_flag(self):
+        with mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": "envkey"}):
+            self.assertEqual(self._resolve([]), "envkey")
+
+    def test_no_auth_conflict_through_main(self):
+        # Same default-deny contradiction as --auth-key + --no-auth.
+        path = self._keyfile()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = serve_mcp.main(["--workspace", str(self._ws()),
+                                 "--auth-key-file", str(path), "--no-auth"])
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
+        self.assertIn("contradict", stderr.getvalue())
+
+    def test_bad_key_file_through_main_is_one_line_exit_78(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = serve_mcp.main(["--workspace", str(self._ws()),
+                                 "--auth-key-file", "/nonexistent/mcp-key"])
+        self.assertEqual(rc, serve_mcp.EXIT_CONFIG)
+        self.assertIn("cannot read auth key file", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
 class TestBuildServer(unittest.IsolatedAsyncioTestCase):
 
