@@ -51,6 +51,11 @@ starts a fresh one.
   --help` into the test suite's output — which since #87 included the
   running machine's home directory, by way of the `--log-file` default
   path. (#92)
+- `docs/serve-mcp.md`'s Logging section no longer lists the startup
+  banner among the things that reach stderr. It goes to stdout, which
+  under a launch agent is a block-buffered file the server never gets
+  to flush — so the one line naming the resolved log path was
+  invisible for exactly the readers most likely to go looking. (#97)
 
 ### Changed
 
