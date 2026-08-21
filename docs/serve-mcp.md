@@ -447,10 +447,13 @@ prunes its own logs, nothing else to configure. If the file can't be
 written, `serve-mcp` refuses with one line and exits 78 (`EX_CONFIG`)
 rather than starting up and failing later.
 
-Access lines go only to the file. Errors — the startup banner, bind
-failures, tracebacks — still reach stderr as well, so a crashed server
-says why in the terminal and the file keeps the same errors alongside
-the access lines.
+Access lines go only to the file. Errors — bind failures, tracebacks —
+still reach stderr as well, so a crashed server says why in the
+terminal and the file keeps the same errors alongside the access
+lines. The startup banner is not one of them: it goes to stdout, which
+under a launch agent is a block-buffered file the server never gets to
+flush, so it appears only once the process stops. Uvicorn's own
+`Uvicorn running on` line is the healthy-start signal to read there.
 
 `scripts/mcp-session.py` already captures the whole stdout/stderr stream
 to its own `server.log`; it needs no flag and is unchanged.
