@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 from typing import NamedTuple
 
 from bunnyforge import _config
@@ -247,6 +248,20 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     return server
 
 
+def _default_log_path() -> Path:
+    """Where --log-file logs when given no value.
+
+    macOS gets ~/Library/Logs (where log viewers look); everywhere else
+    follows the XDG state convention, matching scripts/mcp-session.py's
+    own state directory.
+    """
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "bunnyforge" / "mcp.log"
+    state = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(state) if state else Path.home() / ".local" / "state"
+    return base / "bunnyforge" / "mcp.log"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bunnyforge serve-mcp",
@@ -269,6 +284,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-auth", action="store_true",
                         help="serve with no authentication — local testing "
                              "only; everything served is GM-only material")
+    parser.add_argument("--log-file", nargs="?", metavar="PATH",
+                        const=str(_default_log_path()),
+                        help="write uvicorn's logs to PATH instead of "
+                             "cluttering stderr with access lines; rotated "
+                             "at midnight, 14 days kept. Bare --log-file "
+                             "uses %(const)s")
     parser.add_argument("--allow-direct-edits", action="store_true",
                         help="also expose write_entity, which edits "
                              "canonical files in place and commits each edit")

@@ -52,6 +52,43 @@ class TestMainGuards(unittest.TestCase):
         self.assertEqual(serve_mcp.main(["--workspace", str(empty)]), 1)
 
 
+class TestLogFileFlag(unittest.TestCase):
+    """--log-file parsing and the platform default path — bare Python."""
+
+    def parse(self, argv):
+        return serve_mcp.build_parser().parse_args(argv)
+
+    def test_absent_means_none(self):
+        self.assertIsNone(self.parse([]).log_file)
+
+    def test_bare_flag_uses_platform_default(self):
+        self.assertEqual(self.parse(["--log-file"]).log_file,
+                         str(serve_mcp._default_log_path()))
+
+    def test_explicit_path_wins(self):
+        self.assertEqual(self.parse(["--log-file", "/tmp/x.log"]).log_file,
+                         "/tmp/x.log")
+
+    def test_default_path_on_macos(self):
+        with mock.patch("sys.platform", "darwin"):
+            self.assertEqual(
+                serve_mcp._default_log_path(),
+                Path.home() / "Library" / "Logs" / "bunnyforge" / "mcp.log")
+
+    def test_default_path_honors_xdg_state_home(self):
+        with mock.patch("sys.platform", "linux"), \
+             mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/var/state"}):
+            self.assertEqual(serve_mcp._default_log_path(),
+                             Path("/var/state/bunnyforge/mcp.log"))
+
+    def test_default_path_falls_back_without_xdg(self):
+        with mock.patch("sys.platform", "linux"), \
+             mock.patch.dict(os.environ, {"XDG_STATE_HOME": ""}):
+            self.assertEqual(
+                serve_mcp._default_log_path(),
+                Path.home() / ".local" / "state" / "bunnyforge" / "mcp.log")
+
+
 class TestStartupContract(unittest.TestCase):
     """Default-deny: the spec's startup matrix, refusal rows.
 
