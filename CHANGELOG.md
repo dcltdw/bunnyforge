@@ -57,6 +57,11 @@ starts a fresh one.
   `KeepAlive` leaves it down, silently. The page now says so, offers
   `--port` as the conflict-free route, and names `launchctl kickstart`
   as the way back. (#99)
+- `docs/serve-mcp.md`'s Logging section no longer lists the startup
+  banner among the things that reach stderr. It goes to stdout, which
+  under a launch agent is a block-buffered file the server never gets
+  to flush — so the one line naming the resolved log path was
+  invisible for exactly the readers most likely to go looking. (#97)
 
 ### Changed
 
