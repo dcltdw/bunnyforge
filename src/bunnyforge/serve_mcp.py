@@ -323,9 +323,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-file", nargs="?", metavar="PATH",
                         const=str(_default_log_path()),
                         help="write uvicorn's logs to PATH instead of "
-                             "cluttering stderr with access lines; rotated "
-                             "at midnight, 14 days kept. Bare --log-file "
-                             "uses %(const)s")
+                             "cluttering the terminal with access lines; "
+                             "rotated at midnight, 14 days kept. Bare "
+                             "--log-file uses %(const)s")
     parser.add_argument("--allow-direct-edits", action="store_true",
                         help="also expose write_entity, which edits "
                              "canonical files in place and commits each edit")

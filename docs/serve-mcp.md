@@ -255,9 +255,9 @@ but not already-issued tokens — delete the state file for that.
 
 ## Logging
 
-By default uvicorn writes every request to stderr — run in a background
-terminal, that clutters it with access lines. `--log-file` moves them to
-a self-pruning file instead:
+By default uvicorn writes every request to the terminal — run in a
+background terminal, that clutters it with access lines. `--log-file`
+moves them to a self-pruning file instead:
 
     bunnyforge serve-mcp --public-host mcp.example.com --log-file
 
