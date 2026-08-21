@@ -4,3 +4,7 @@ __pycache__/
 dist/
 build/
 .venv-mcp/
+.DS_Store
+
+# A GM key kept for local testing -- never versioned.
+gm-secret.txt
