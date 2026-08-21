@@ -28,6 +28,9 @@ starts a fresh one.
   private file (refused unless it is mode 600-tight), so launchers
   that run no shell — launchd above all — never hold the key
   themselves. (#93)
+- `docs/serve-mcp.md`: "Make the server start on its own (macOS)" — a
+  launch agent recipe with a key file and a mandatory verification
+  step, closing the tunnel-starts-but-server-doesn't asymmetry. (#93)
 
 ### Fixed
 
