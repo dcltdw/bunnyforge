@@ -550,6 +550,16 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
               file=sys.stderr)
         return 1
 
+    log_path = None
+    if args.log_file is not None:
+        log_path = Path(args.log_file).expanduser()
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            print(f"cannot create log directory {log_path.parent}: {exc}",
+                  file=sys.stderr)
+            return 1
+
     # --public-host does double duty: it names the OAuth issuer, and it
     # declares the hostname to DNS-rebinding protection in build_app (#46).
     issuer = (f"https://{args.public_host}" if args.public_host
@@ -579,7 +589,12 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
     print(f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp "
           f"(OAuth issuer: {issuer})" if key else
           f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp")
-    uvicorn.run(app, host=args.host, port=args.port)
+    if log_path:
+        print(f"access log: {log_path} (rotated at midnight, 14 kept)")
+        uvicorn.run(app, host=args.host, port=args.port,
+                    log_config=_log_config(log_path))
+    else:
+        uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 

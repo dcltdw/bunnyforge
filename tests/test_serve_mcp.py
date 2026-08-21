@@ -139,6 +139,37 @@ class TestLogConfig(unittest.TestCase):
                 logger.propagate = True
 
 
+@unittest.skipUnless(HAVE_MCP, "needs the mcp extra")
+class TestLogFileWiring(unittest.TestCase):
+    """main() hands uvicorn the log_config — run mocked, no socket."""
+
+    def _main(self, extra):
+        store = scaffold(self)
+        import uvicorn
+        with mock.patch.object(uvicorn, "run") as run, \
+             mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": ""}), \
+             contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()):
+            rc = serve_mcp.main(["--workspace", str(store.ws.root),
+                                 "--no-auth"] + extra)
+        return rc, run, out.getvalue()
+
+    def test_flag_passes_log_config_and_creates_directory(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        target = root / "logs" / "mcp.log"
+        rc, run, out = self._main(["--log-file", str(target)])
+        self.assertEqual(rc, 0)
+        self.assertTrue(target.parent.is_dir())
+        cfg = run.call_args.kwargs["log_config"]
+        self.assertEqual(cfg["handlers"]["file"]["filename"], str(target))
+        self.assertIn(str(target), out)   # startup line names the path
+
+    def test_no_flag_passes_no_log_config_kwarg(self):
+        rc, run, _ = self._main([])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("log_config", run.call_args.kwargs)
+
+
 class TestStartupContract(unittest.TestCase):
     """Default-deny: the spec's startup matrix, refusal rows.
 
@@ -179,6 +210,21 @@ class TestStartupContract(unittest.TestCase):
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stderr(io.StringIO()):
                 serve_mcp.build_parser().parse_args(["--token", "t"])
+
+    def test_log_file_refuses_uncreatable_directory(self):
+        # A file where a directory is needed: mkdir(parents=True) fails
+        # with NotADirectoryError, an OSError — deterministically, on
+        # bare Python, before any uvicorn import. uvicorn is stubbed so
+        # that a MISSING refusal fails fast (rc 0 from the mock) rather
+        # than falling through to a real uvicorn.run and serving.
+        blocker = self.enterContext(tempfile.NamedTemporaryFile())
+        target = Path(blocker.name) / "sub" / "mcp.log"
+        with mock.patch.dict("sys.modules",
+                             {"uvicorn": mock.MagicMock()}):
+            rc, err = self._main(["--no-auth", "--log-file", str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn("log directory", err)
+        self.assertNotIn("Traceback", err)
 
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
