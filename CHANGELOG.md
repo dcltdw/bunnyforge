@@ -24,9 +24,18 @@ starts a fresh one.
   a platform default:
   `~/Library/Logs/bunnyforge/mcp.log` on macOS,
   `$XDG_STATE_HOME/bunnyforge/mcp.log` elsewhere. (#87)
+- `bunnyforge serve-mcp --auth-key-file PATH` reads the GM key from a
+  private file (refused unless it is mode 600-tight), so launchers
+  that run no shell — launchd above all — never hold the key
+  themselves. (#93)
 
 ### Changed
 
+- `serve-mcp` startup refusals (no auth, bad workspace, unwritable log
+  file, missing `[mcp]` extra) exit `78` (sysexits `EX_CONFIG`) rather
+  than `1`, so `launchctl list` — and any service manager that can
+  branch on exit codes — can tell "fix the configuration" from a
+  crash. `--check` still exits `1` on a failing report. (#93)
 - `docs/serve-mcp.md` now walks through creating the named tunnel it
   recommends — login, create, route dns, config, launch agent — plus the
   traps: the ingress catch-all is mandatory, the credentials path must be

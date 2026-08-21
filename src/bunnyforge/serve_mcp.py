@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -37,6 +38,11 @@ from bunnyforge._config import ConfigError, WorkspaceError
 from bunnyforge._store import StoreError, WorkspaceStore
 
 KEY_ENV = "BUNNYFORGE_MCP_KEY"
+
+# sysexits(3) EX_CONFIG: a startup refusal. The configuration is wrong
+# and restarting cannot fix it, so a service manager (or a human reading
+# `launchctl list`) can tell it from a crash, which stays exit 1 (#93).
+EXIT_CONFIG = 78
 
 # Workspace doctrine, offered as MCP resources so a fresh conversation can
 # load the house rules before it writes anything. Absent files are simply
@@ -302,6 +308,56 @@ def _log_config(path: Path) -> dict:
     }
 
 
+def _read_key_file(path_str: str) -> str:
+    """The GM key from a file a plist can safely point at (#93).
+
+    Stripped, so a trailing newline from echo is harmless. Refused when
+    unreadable, empty, or -- on POSIX -- accessible to group or other:
+    the file stands in for a secret typed by hand, and a lax mode is a
+    misconfiguration to fix, not to serve through.
+    """
+    path = Path(path_str).expanduser()
+    try:
+        # I/O first, so a directory lands on IsADirectoryError rather
+        # than the mode check, whose chmod 600 advice would break it.
+        raw = path.read_text(encoding="utf-8")
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except UnicodeDecodeError:
+        # Never interpolate the codec error: it quotes a byte of the key.
+        raise ValueError(
+            f"auth key file {path} is not valid UTF-8") from None
+    except OSError as exc:
+        raise ValueError(f"cannot read auth key file: {exc}") from None
+    # POSIX only; the group/other bits are fiction elsewhere.
+    if os.name == "posix" and mode & 0o077:
+        raise ValueError(
+            f"auth key file {path} is group- or other-accessible "
+            f"(mode {mode:03o}) -- chmod 600 it")
+    key = raw.strip()
+    if not key:
+        raise ValueError(f"auth key file {path} is empty")
+    return key
+
+
+def _resolve_key(args: argparse.Namespace) -> str:
+    """--auth-key, else --auth-key-file, else $BUNNYFORGE_MCP_KEY.
+
+    The two flags together are refused as ambiguous rather than
+    silently ordered; either flag outranks the environment variable,
+    which is how --auth-key has always behaved. Raises ValueError
+    carrying the one-line refusal; "" means no key anywhere, and the
+    default-deny check in main() owns that refusal.
+    """
+    if args.auth_key and args.auth_key_file:
+        raise ValueError("--auth-key contradicts --auth-key-file; "
+                         "pick one")
+    if args.auth_key:
+        return args.auth_key.strip()
+    if args.auth_key_file:
+        return _read_key_file(args.auth_key_file)
+    return os.environ.get(KEY_ENV, "").strip()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bunnyforge serve-mcp",
@@ -317,6 +373,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pre-shared GM key typed on the OAuth consent "
                              f"page, or set {KEY_ENV}; required unless "
                              "--no-auth")
+    parser.add_argument("--auth-key-file", metavar="PATH",
+                        help="read the GM key from PATH -- for launchers "
+                             "that run no shell (a launchd agent); the "
+                             "file must not be group- or other-readable")
     parser.add_argument("--public-host",
                         help="public hostname the tunnel serves this host "
                              "as; the OAuth issuer becomes https://HOST "
@@ -541,18 +601,22 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
         ws = _config.resolve_workspace(args.workspace)
     except (ConfigError, WorkspaceError) as exc:
         print(exc, file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
-    key = (args.auth_key or os.environ.get(KEY_ENV, "")).strip()
+    try:
+        key = _resolve_key(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_CONFIG
     if key and args.no_auth:
-        print(f"--no-auth contradicts --auth-key/{KEY_ENV}; pick one",
-              file=sys.stderr)
-        return 1
+        print(f"--no-auth contradicts --auth-key/--auth-key-file/"
+              f"{KEY_ENV}; pick one", file=sys.stderr)
+        return EXIT_CONFIG
     if not key and not args.no_auth:
-        print("refusing to start without auth: pass --auth-key, set "
-              f"{KEY_ENV}, or (local testing only) pass --no-auth",
-              file=sys.stderr)
-        return 1
+        print("refusing to start without auth: pass --auth-key or "
+              f"--auth-key-file, set {KEY_ENV}, or (local testing "
+              "only) pass --no-auth", file=sys.stderr)
+        return EXIT_CONFIG
 
     log_path = None
     if args.log_file is not None:
@@ -562,7 +626,7 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
             log_path.open("a").close()
         except OSError as exc:
             print(f"cannot write log file {log_path}: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_CONFIG
 
     # --public-host does double duty: it names the OAuth issuer, and it
     # declares the hostname to DNS-rebinding protection in build_app (#46).
@@ -584,7 +648,7 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
                               oauth=oauth)
     except ModuleNotFoundError:
         print(_INSTALL_HINT, file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
     app = build_app(server, public_host=args.public_host)
     if not key:
