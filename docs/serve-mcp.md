@@ -267,8 +267,8 @@ macOS and `$XDG_STATE_HOME/bunnyforge/mcp.log` (default
 The resolved path is printed at startup. The file rotates at midnight
 and 14 rotated days are kept alongside the live one — the server
 prunes its own logs, nothing else to configure. If the file can't be
-written, `serve-mcp` refuses with one line and exits 1 rather than
-starting up and failing later.
+written, `serve-mcp` refuses with one line and exits 78 (`EX_CONFIG`)
+rather than starting up and failing later.
 
 Access lines go only to the file. Errors — the startup banner, bind
 failures, tracebacks — still reach stderr as well, so a crashed server
