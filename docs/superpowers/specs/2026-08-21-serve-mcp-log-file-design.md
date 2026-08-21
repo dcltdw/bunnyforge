@@ -16,6 +16,19 @@ The traffic is benign — claude.ai's own MCP connector, OAuth-authenticated —
 but the lines clutter the terminal. They should leave the terminal yet still
 be recorded to a file, and the file must prune itself.
 
+> **Errata (post-implementation, 2026-08-21).** "Every request lands on
+> stderr" names the wrong stream, here and at "uvicorn installs its stderr
+> default" below. uvicorn's stock `LOGGING_CONFIG` routes the `access`
+> handler to `ext://sys.stdout` and only the `default` handler to
+> `ext://sys.stderr` (checked against uvicorn 0.52.4). The argument below
+> is unaffected and is left as written: the clutter is real on either
+> stream; per-logger routing remains the only option that separates access
+> from errors at all, since `scripts/mcp-session.py` captures both streams
+> into one `server.log` regardless; and the constraint that made the flag
+> opt-in — don't hollow out that `server.log` — rests on that same
+> both-streams redirect. The shipped code was always correct; the prose in
+> `docs/serve-mcp.md` and the flag's help string were corrected in #88.
+
 ## Decision: Python-side rotation (option B)
 
 Three options were surveyed:

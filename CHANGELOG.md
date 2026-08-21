@@ -25,6 +25,26 @@ starts a fresh one.
   `~/Library/Logs/bunnyforge/mcp.log` on macOS,
   `$XDG_STATE_HOME/bunnyforge/mcp.log` elsewhere. (#87)
 
+### Fixed
+
+- `docs/serve-mcp.md` now says which variable names the workspace for
+  `serve-mcp` itself: `--workspace`, else `$BUNNYFORGE_WORKSPACE`, else
+  the nearest `campaign.toml`. `$BUNNYFORGE_MCP_WORKSPACE` — the only
+  one the page previously mentioned — belongs to
+  `scripts/mcp-session.py` alone, so setting it and running `serve-mcp`
+  directly refused to start with no hint why. (#89)
+- `docs/serve-mcp.md`'s named-tunnel recipe now has a step for checking
+  that the launch agent it just installed actually runs, and the repair
+  when it does not. `cloudflared service install` has been seen writing
+  a plist whose `ProgramArguments` is the bare binary with no
+  subcommand: it exits 1, retries every five seconds forever, and the
+  only symptom is a hostname that starts 502ing whenever the tunnel you
+  were really relying on goes away. (#90)
+- `test_help_works_without_the_extra` no longer dumps `serve-mcp
+  --help` into the test suite's output — which since #87 included the
+  running machine's home directory, by way of the `--log-file` default
+  path. (#92)
+
 ### Changed
 
 - `docs/serve-mcp.md` now walks through creating the named tunnel it
