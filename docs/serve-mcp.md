@@ -253,6 +253,31 @@ Delete the token state file and restart the server:
 the consent flow again. Changing the GM key invalidates future grants
 but not already-issued tokens — delete the state file for that.
 
+## Logging
+
+By default uvicorn writes every request to the terminal — run in a
+background terminal, that clutters it with access lines. `--log-file`
+moves them to a self-pruning file instead:
+
+    bunnyforge serve-mcp --public-host mcp.example.com --log-file
+
+With no value the log goes to `~/Library/Logs/bunnyforge/mcp.log` on
+macOS and `$XDG_STATE_HOME/bunnyforge/mcp.log` (default
+`~/.local/state/bunnyforge/mcp.log`) elsewhere; pass a path to choose.
+The resolved path is printed at startup. The file rotates at midnight
+and 14 rotated days are kept alongside the live one — the server
+prunes its own logs, nothing else to configure. If the file can't be
+written, `serve-mcp` refuses with one line and exits 1 rather than
+starting up and failing later.
+
+Access lines go only to the file. Errors — the startup banner, bind
+failures, tracebacks — still reach stderr as well, so a crashed server
+says why in the terminal and the file keeps the same errors alongside
+the access lines.
+
+`scripts/mcp-session.py` already captures the whole stdout/stderr stream
+to its own `server.log`; it needs no flag and is unchanged.
+
 ## Troubleshooting
 
 - **401 from `/mcp`:** no or expired token — reconnect from claude.ai.

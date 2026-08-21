@@ -1,6 +1,8 @@
 import contextlib
 import importlib.util
 import io
+import logging
+import logging.config
 import os
 import tempfile
 import unittest
@@ -52,6 +54,156 @@ class TestMainGuards(unittest.TestCase):
         self.assertEqual(serve_mcp.main(["--workspace", str(empty)]), 1)
 
 
+class TestLogFileFlag(unittest.TestCase):
+    """--log-file parsing and the platform default path — bare Python."""
+
+    def parse(self, argv):
+        return serve_mcp.build_parser().parse_args(argv)
+
+    def test_absent_means_none(self):
+        self.assertIsNone(self.parse([]).log_file)
+
+    def test_bare_flag_uses_platform_default(self):
+        self.assertEqual(self.parse(["--log-file"]).log_file,
+                         str(serve_mcp._default_log_path()))
+
+    def test_explicit_path_wins(self):
+        self.assertEqual(self.parse(["--log-file", "/tmp/x.log"]).log_file,
+                         "/tmp/x.log")
+
+    def test_default_path_on_macos(self):
+        with mock.patch("sys.platform", "darwin"):
+            self.assertEqual(
+                serve_mcp._default_log_path(),
+                Path.home() / "Library" / "Logs" / "bunnyforge" / "mcp.log")
+
+    def test_default_path_honors_xdg_state_home(self):
+        with mock.patch("sys.platform", "linux"), \
+             mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/var/state"}):
+            self.assertEqual(serve_mcp._default_log_path(),
+                             Path("/var/state/bunnyforge/mcp.log"))
+
+    def test_default_path_falls_back_without_xdg(self):
+        with mock.patch("sys.platform", "linux"), \
+             mock.patch.dict(os.environ, {"XDG_STATE_HOME": ""}):
+            self.assertEqual(
+                serve_mcp._default_log_path(),
+                Path.home() / ".local" / "state" / "bunnyforge" / "mcp.log")
+
+
+class TestLogConfig(unittest.TestCase):
+    """The dict handed to uvicorn: access to file only, errors to both."""
+
+    def setUp(self):
+        self.cfg = serve_mcp._log_config(Path("/tmp/mcp.log"))
+
+    def test_access_goes_to_file_only(self):
+        self.assertEqual(self.cfg["loggers"]["uvicorn.access"]["handlers"],
+                         ["file"])
+
+    def test_errors_go_to_file_and_stderr(self):
+        self.assertEqual(self.cfg["loggers"]["uvicorn.error"]["handlers"],
+                         ["file", "stderr"])
+        self.assertEqual(self.cfg["loggers"]["uvicorn"]["handlers"],
+                         ["file", "stderr"])
+
+    def test_one_rotating_file_handler_midnight_keep_14(self):
+        # ONE file handler on purpose: two rotating handlers on the same
+        # file would both attempt the rollover rename and collide.
+        handlers = self.cfg["handlers"]
+        file_handlers = [h for h in handlers.values()
+                         if "filename" in h]
+        self.assertEqual(len(file_handlers), 1)
+        h = handlers["file"]
+        self.assertEqual(
+            h["class"], "logging.handlers.TimedRotatingFileHandler")
+        self.assertEqual(h["when"], "midnight")
+        self.assertEqual(h["backupCount"], 14)
+        self.assertEqual(h["filename"], "/tmp/mcp.log")
+
+    def _detach_uvicorn_loggers(self):
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+            logger.propagate = True
+            logger.setLevel(logging.NOTSET)
+
+    def test_dict_is_valid_dictconfig(self):
+        # A wiring assertion can pass on a malformed dict; only
+        # dictConfig itself proves the schema. Built against a tmpdir
+        # because the rotating handler opens its file eagerly.
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        try:
+            logging.config.dictConfig(
+                serve_mcp._log_config(root / "mcp.log"))
+            self.assertTrue(logging.getLogger("uvicorn.access").handlers)
+            self.assertTrue((root / "mcp.log").exists())
+        finally:
+            self._detach_uvicorn_loggers()
+
+    def test_access_lines_reach_the_file_and_not_the_terminal(self):
+        # The behavioral guarantee, not just the wiring: delete
+        # "propagate": False from the uvicorn.access entry and access
+        # lines propagate up to uvicorn's [file, stderr] handlers, so
+        # they land in the terminal and are written to the file twice
+        # -- while every handler-list assertion above still passes.
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        log = root / "mcp.log"
+        err = io.StringIO()
+        try:
+            # redirect_stderr wraps dictConfig, not the other way round:
+            # ext://sys.stderr resolves to whatever sys.stderr IS at
+            # configure time, so the handler must be configured while
+            # already redirected or it binds to the real terminal stream
+            # forever, silently uncaptured (confirmed empirically).
+            with contextlib.redirect_stderr(err):
+                logging.config.dictConfig(serve_mcp._log_config(log))
+                logging.getLogger("uvicorn.access").info(
+                    '%s - "%s %s HTTP/%s" %d', "1.2.3.4:0", "POST", "/mcp",
+                    "1.1", 200)
+                logging.getLogger("uvicorn.error").info("bind failed")
+            for handler in logging.getLogger("uvicorn.access").handlers:
+                handler.flush()
+        finally:
+            self._detach_uvicorn_loggers()
+        self.assertIn('"POST /mcp HTTP/1.1" 200', log.read_text())
+        self.assertNotIn("POST /mcp", err.getvalue())
+        self.assertIn("bind failed", err.getvalue())
+
+
+@unittest.skipUnless(HAVE_MCP, "needs the mcp extra")
+class TestLogFileWiring(unittest.TestCase):
+    """main() hands uvicorn the log_config — run mocked, no socket."""
+
+    def _main(self, extra):
+        store = scaffold(self)
+        import uvicorn
+        with mock.patch.object(uvicorn, "run") as run, \
+             mock.patch.dict(os.environ, {"BUNNYFORGE_MCP_KEY": ""}), \
+             contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()):
+            rc = serve_mcp.main(["--workspace", str(store.ws.root),
+                                 "--no-auth"] + extra)
+        return rc, run, out.getvalue()
+
+    def test_flag_passes_log_config_and_creates_directory(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        target = root / "logs" / "mcp.log"
+        rc, run, out = self._main(["--log-file", str(target)])
+        self.assertEqual(rc, 0)
+        self.assertTrue(target.parent.is_dir())
+        cfg = run.call_args.kwargs["log_config"]
+        self.assertEqual(cfg["handlers"]["file"]["filename"], str(target))
+        self.assertIn(str(target), out)   # startup line names the path
+
+    def test_no_flag_passes_no_log_config_kwarg(self):
+        rc, run, _ = self._main([])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("log_config", run.call_args.kwargs)
+
+
 class TestStartupContract(unittest.TestCase):
     """Default-deny: the spec's startup matrix, refusal rows.
 
@@ -92,6 +244,33 @@ class TestStartupContract(unittest.TestCase):
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stderr(io.StringIO()):
                 serve_mcp.build_parser().parse_args(["--token", "t"])
+
+    def test_log_file_refuses_uncreatable_directory(self):
+        # A file where a directory is needed: mkdir(parents=True) fails
+        # with NotADirectoryError, an OSError — deterministically, on
+        # bare Python, before any uvicorn import. uvicorn is stubbed so
+        # that a MISSING refusal fails fast (rc 0 from the mock) rather
+        # than falling through to a real uvicorn.run and serving.
+        blocker = self.enterContext(tempfile.NamedTemporaryFile())
+        target = Path(blocker.name) / "sub" / "mcp.log"
+        with mock.patch.dict("sys.modules",
+                             {"uvicorn": mock.MagicMock()}):
+            rc, err = self._main(["--no-auth", "--log-file", str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot write log file", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_log_file_refuses_a_directory_as_the_target(self):
+        # mkdir(exist_ok=True) sails past a target that is itself a
+        # directory; only opening the file catches it, and it must be a
+        # refusal line rather than a traceback out of dictConfig.
+        target = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.dict("sys.modules",
+                             {"uvicorn": mock.MagicMock()}):
+            rc, err = self._main(["--no-auth", "--log-file", str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot write log file", err)
+        self.assertNotIn("Traceback", err)
 
 
 @unittest.skipUnless(HAVE_MCP, "mcp extra not installed")

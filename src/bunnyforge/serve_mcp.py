@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 from typing import NamedTuple
 
 from bunnyforge import _config
@@ -247,6 +248,60 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     return server
 
 
+def _default_log_path() -> Path:
+    """Where --log-file logs when given no value.
+
+    macOS gets ~/Library/Logs (where log viewers look); everywhere else
+    follows the XDG state convention, matching scripts/mcp-session.py's
+    own state directory.
+    """
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "bunnyforge" / "mcp.log"
+    state = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(state) if state else Path.home() / ".local" / "state"
+    return base / "bunnyforge" / "mcp.log"
+
+
+def _log_config(path: Path) -> dict:
+    """uvicorn log_config: access lines to a rotated file, errors to both.
+
+    One TimedRotatingFileHandler shared by every uvicorn logger — two
+    rotating handlers on the same file would both attempt the rollover
+    rename and collide. The formatter adds timestamps, which uvicorn's
+    stderr default lacks; access lines render fine through it because
+    the request line lives in the record's message/args. Named
+    `timestamped` rather than uvicorn's own `default`/`access` formatter
+    names, so passing `use_colors=` to `uvicorn.run` would raise
+    `KeyError: 'default'` in uvicorn's `Config.configure_logging` —
+    unreachable today since serve_mcp never passes it.
+    """
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "timestamped": {
+                "format": "%(asctime)s %(levelname)s %(message)s"}},
+        "handlers": {
+            "file": {
+                "class": "logging.handlers.TimedRotatingFileHandler",
+                "filename": str(path),
+                "when": "midnight",
+                "backupCount": 14,
+                "formatter": "timestamped"},
+            "stderr": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+                "formatter": "timestamped"}},
+        "loggers": {
+            "uvicorn": {"handlers": ["file", "stderr"],
+                        "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["file", "stderr"],
+                              "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["file"],
+                               "level": "INFO", "propagate": False}},
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bunnyforge serve-mcp",
@@ -269,6 +324,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-auth", action="store_true",
                         help="serve with no authentication — local testing "
                              "only; everything served is GM-only material")
+    parser.add_argument("--log-file", nargs="?", metavar="PATH",
+                        const=str(_default_log_path()),
+                        help="write uvicorn's logs to PATH instead of "
+                             "cluttering the terminal with access lines; "
+                             "rotated at midnight, 14 days kept. Bare "
+                             "--log-file uses %(const)s")
     parser.add_argument("--allow-direct-edits", action="store_true",
                         help="also expose write_entity, which edits "
                              "canonical files in place and commits each edit")
@@ -493,6 +554,16 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
               file=sys.stderr)
         return 1
 
+    log_path = None
+    if args.log_file is not None:
+        log_path = Path(args.log_file).expanduser()
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.open("a").close()
+        except OSError as exc:
+            print(f"cannot write log file {log_path}: {exc}", file=sys.stderr)
+            return 1
+
     # --public-host does double duty: it names the OAuth issuer, and it
     # declares the hostname to DNS-rebinding protection in build_app (#46).
     issuer = (f"https://{args.public_host}" if args.public_host
@@ -522,7 +593,12 @@ def main(argv: list[str] | None = None, probe=_probe) -> int:
     print(f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp "
           f"(OAuth issuer: {issuer})" if key else
           f"serving {ws.config.name} at http://{args.host}:{args.port}/mcp")
-    uvicorn.run(app, host=args.host, port=args.port)
+    if log_path is not None:
+        print(f"access log: {log_path} (rotated at midnight, 14 kept)")
+        uvicorn.run(app, host=args.host, port=args.port,
+                    log_config=_log_config(log_path))
+    else:
+        uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
