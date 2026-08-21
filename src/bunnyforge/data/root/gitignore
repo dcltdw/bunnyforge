@@ -14,3 +14,6 @@ __pycache__/
 # it is the committed baseline.
 .bunnyforge/wiki-token
 .bunnyforge/wiki-drift/
+
+# macOS Finder litter, created in any folder it visits.
+.DS_Store
