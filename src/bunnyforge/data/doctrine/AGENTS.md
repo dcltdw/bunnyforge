@@ -244,6 +244,32 @@ include the separator, even if the GM notes section is empty. A handout is a
   draft I delete it or move it to `_AgentDrafts/_Rejected/`, which is
   never read, like `_Ignore/`.
 
+## Direct edits to canon
+
+When the MCP server runs with direct edits enabled, you have two more
+tools: `write_entity`, which edits a canonical file in place, and
+`promote_draft`, which moves a draft out of `_AgentDrafts/` to its
+canonical location. Each commits its own change.
+
+- **Use them only when I explicitly ask** for that specific edit or
+  promotion — "promote that draft", "make that fix in the file
+  directly". Having the tools is not permission to use them. Approving
+  a draft is not asking you to promote it, and asking you to write
+  something is asking you to draft it.
+- **Otherwise, work as if they did not exist.** Everything this file
+  says about drafting still holds: new material goes through
+  `save_draft`, changes to canon through `propose_revision`, and the
+  end-of-session updates are drafted, not written.
+- **Some files refuse them whatever I ask:** `AGENTS.md`,
+  `[[campaign-doctrine]]` and `[[style-guide]]` at the workspace root,
+  anything in `Perceptions/`, and any rewrite of a past session — the
+  tools accept only an append there. Propose a revision instead and I
+  will apply it by hand; do not look for another route around the
+  refusal.
+- **Their commit messages are fixed** (`serve-mcp: edit <path>`,
+  `serve-mcp: promote <path>`), so tell me in chat what changed and
+  why — the note **Version control** above asks a commit to carry.
+
 ## Retrieval scope: live, archive, or both
 
 - When answering questions or reporting what is established, read live and

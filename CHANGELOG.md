@@ -72,6 +72,16 @@ starts a fresh one.
 
 ### Changed
 
+- `serve-mcp --allow-direct-edits`: `write_entity` and `promote_draft`
+  now refuse canon that doctrine already forbids changing — root-level
+  `AGENTS.md`, `campaign-doctrine.md` and `style-guide.md`, anything
+  under `perceptions_dir`, and any rewrite of an existing `Sessions/`
+  file (an append still lands). `propose_revision` is unaffected, so a
+  proposal the GM applies by hand still works. Both tools'
+  descriptions, and the packaged `AGENTS.md`, now say the agent uses
+  them only when the GM explicitly asks for that specific change.
+  **Existing workspaces:** adopt the new `AGENTS.md`
+  ([`docs/adopting-doctrine.md`](docs/adopting-doctrine.md)). (#104)
 - `serve-mcp` startup refusals (no auth, bad workspace, unwritable log
   file, missing `[mcp]` extra) exit `78` (sysexits `EX_CONFIG`) rather
   than `1`, so `launchctl list` — and any service manager that can
