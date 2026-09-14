@@ -45,6 +45,16 @@ BASES_NAME = ".proposal-bases.json"
 
 INBOUND_SUFFIXES = frozenset({".md", ".txt", ".html", ".htm"})
 
+# Canon the write tools never change, whatever an agent is asked (#104):
+# the package-owned AGENTS.md and the GM's binding rules, as root-level
+# paths; the perception record (config.perceptions_dir), refused
+# outright; and the session record, which accepts only an append. Reads
+# and propose_revision stay open -- a proposal the GM applies by hand
+# writes nothing to canon.
+PROTECTED_ROOT_DOCS = frozenset({"AGENTS.md", "campaign-doctrine.md",
+                                 "style-guide.md"})
+APPEND_ONLY_DIR = "Sessions"
+
 
 def _slug(name: str) -> str:
     """A _DRAFT_NAME_RE-validated name, as a canon-style filename stem:
@@ -154,6 +164,32 @@ class WorkspaceStore:
                 f"path is in an excluded directory ({', '.join(sorted(excluded))}): "
                 f"{path}")
         return p
+
+    def _guard_canon_write(self, target: Path, content: str) -> None:
+        """Refuse a write doctrine forbids, before anything changes.
+
+        Keyed on the destination's workspace-relative path, so one guard
+        serves both doors into canon (write_entity, promote_draft) however
+        the path was spelled and however the draft was made."""
+        parts = target.relative_to(self.ws.root).parts
+        rel = "/".join(parts)
+        if len(parts) == 1 and parts[0] in PROTECTED_ROOT_DOCS:
+            raise StoreError(
+                f"{rel} is protected: the write tools never change it — "
+                "propose_revision it, and the GM applies the change by "
+                "hand")
+        if parts[0] == self.ws.config.perceptions_dir:
+            raise StoreError(
+                f"{rel} is in the perception record, which is regenerated "
+                "from the wiki and never agent-written — propose changes "
+                "to canon instead")
+        if (parts[0] == APPEND_ONLY_DIR and target.is_file()
+                and not content.startswith(
+                    target.read_text(encoding="utf-8"))):
+            raise StoreError(
+                f"{rel} is a session file, and sessions are append-only — "
+                "keep the existing text exactly and add to the end (a "
+                "correction note, not a revision)")
 
     # -- read side ----------------------------------------------------------
 
@@ -543,6 +579,7 @@ class WorkspaceStore:
         inner = p.relative_to(self._drafts())
         target = self.ws.root / inner
         target_rel = inner.as_posix()
+        self._guard_canon_write(target, p.read_text(encoding="utf-8"))
         if target.is_file():
             # A revision: its recorded base must still match canon. None
             # (unrecorded) never equals a hash, so unverifiable shadows
@@ -676,6 +713,7 @@ class WorkspaceStore:
         if not target.is_file() or target.suffix != ".md":
             raise StoreError(f"no such content file: {path}")
         rel = target.relative_to(self.ws.root).as_posix()
+        self._guard_canon_write(target, content)
         if target.read_text(encoding="utf-8") == content:
             return rel  # nothing to change, nothing to commit
         probe = subprocess.run(

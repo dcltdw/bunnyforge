@@ -969,6 +969,172 @@ class TestWriteEntity(StoreCase):
             store.write_entity("../outside.md", "x")
 
 
+class TestProtectedCanonWrites(StoreCase):
+    """#104: the write tools refuse what doctrine already forbids.
+
+    Before this, doctrine prose was the only thing standing between an
+    agent and the package-owned AGENTS.md, the GM's binding rules, the
+    perception record, and past sessions. Both paths that write canon --
+    write_entity and promote_draft -- run one guard, keyed on the resolved
+    destination, so neither a traversal spelling nor a draft's origin gets
+    around it. propose_revision stays open: proposing a change for the GM
+    to apply by hand writes nothing to canon."""
+
+    ROOT_DOCS = ("AGENTS.md", "campaign-doctrine.md", "style-guide.md")
+    SESSION = "# Session 1\nThey met.\n"
+
+    def make_git_ws(self, toml_extra: str = ""):
+        ws = self.make_ws(toml_extra)
+        for doc in self.ROOT_DOCS:
+            (ws.root / doc).write_text(f"# {doc}\nbinding\n",
+                                       encoding="utf-8")
+        beliefs = ws.root / ws.config.perceptions_dir
+        beliefs.mkdir()
+        (beliefs / "party-theory.md").write_text("they think X\n",
+                                                 encoding="utf-8")
+        (ws.root / "Sessions").mkdir()
+        (ws.root / "Sessions" / "session-001.md").write_text(
+            self.SESSION, encoding="utf-8")
+        (ws.root / "NPCs" / "style-guide.md").write_text(
+            "an NPC named for her taste\n", encoding="utf-8")
+        for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                    ["config", "user.name", "t"], ["add", "-A"],
+                    ["commit", "-qm", "seed"]):
+            subprocess.run(["git", "-C", str(ws.root)] + cmd, check=True)
+        return ws
+
+    def _git(self, ws, *args) -> str:
+        return subprocess.run(["git", "-C", str(ws.root), *args],
+                              capture_output=True, text=True,
+                              check=True).stdout
+
+    def _read(self, ws, rel: str) -> str:
+        return (ws.root / rel).read_text(encoding="utf-8")
+
+    # -- write_entity -------------------------------------------------------
+
+    def test_write_entity_refuses_the_doctrine_files_at_the_root(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        head = self._git(ws, "rev-parse", "HEAD")
+        for doc in self.ROOT_DOCS:
+            with self.subTest(doc=doc):
+                with self.assertRaises(_store.StoreError) as ctx:
+                    store.write_entity(doc, "rewritten\n")
+                self.assertIn(doc, str(ctx.exception))
+                self.assertEqual(self._read(ws, doc), f"# {doc}\nbinding\n")
+        self.assertEqual(self._git(ws, "rev-parse", "HEAD"), head)
+
+    def test_a_traversal_spelling_does_not_get_around_the_guard(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError):
+            store.write_entity("NPCs/../AGENTS.md", "rewritten\n")
+        self.assertEqual(self._read(ws, "AGENTS.md"),
+                         "# AGENTS.md\nbinding\n")
+
+    def test_only_the_root_copies_are_protected(self):
+        # Keyed on the workspace-relative path, not the filename: an NPC
+        # that shares a doctrine file's name is ordinary canon.
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        store.write_entity("NPCs/style-guide.md", "revised\n")
+        self.assertEqual(self._read(ws, "NPCs/style-guide.md"), "revised\n")
+
+    def test_write_entity_refuses_the_perception_record(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError):
+            store.write_entity("Perceptions/party-theory.md", "corrected\n")
+        self.assertEqual(self._read(ws, "Perceptions/party-theory.md"),
+                         "they think X\n")
+
+    def test_the_perception_guard_follows_configuration(self):
+        ws = self.make_git_ws('\n[workspace]\nperceptions_dir = "Beliefs"\n')
+        (ws.root / "Perceptions").mkdir()
+        (ws.root / "Perceptions" / "notes.md").write_text(
+            "ordinary\n", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        with self.assertRaises(_store.StoreError):
+            store.write_entity("Beliefs/party-theory.md", "corrected\n")
+        # With the record renamed, a directory that merely carries the
+        # default name is ordinary canon.
+        store.write_entity("Perceptions/notes.md", "revised\n")
+        self.assertEqual(self._read(ws, "Perceptions/notes.md"), "revised\n")
+
+    def test_a_session_accepts_an_append(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        appended = self.SESSION + "Correction: it rained.\n"
+        store.write_entity("Sessions/session-001.md", appended)
+        self.assertEqual(self._read(ws, "Sessions/session-001.md"), appended)
+        self.assertIn("serve-mcp: edit Sessions/session-001.md",
+                      self._git(ws, "log", "-1", "--format=%s"))
+
+    def test_a_session_refuses_anything_but_an_append(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        for content in ("# Session 1\nThey fought.\n",   # a revision
+                        "# Session 1\n"):                 # a truncation
+            with self.subTest(content=content):
+                with self.assertRaises(_store.StoreError):
+                    store.write_entity("Sessions/session-001.md", content)
+                self.assertEqual(self._read(ws, "Sessions/session-001.md"),
+                                 self.SESSION)
+
+    # -- promote_draft ------------------------------------------------------
+
+    def test_promote_refuses_a_revision_of_a_doctrine_file(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        # Proposing stays open, so the GM can apply the change by hand...
+        rel = store.propose_revision("AGENTS.md", "rewritten\n")
+        # ...but the tool will not apply it for them.
+        with self.assertRaises(_store.StoreError):
+            store.promote_draft(rel)
+        self.assertEqual(self._read(ws, "AGENTS.md"),
+                         "# AGENTS.md\nbinding\n")
+        self.assertTrue((ws.root / rel).is_file())  # left for the GM
+
+    def test_promote_refuses_the_perception_record_whatever_the_origin(self):
+        # save_draft refuses the section, but a hand-made file under the
+        # drafts tree mirrors canon all the same: the guard is keyed on
+        # the destination, not on how the draft got there.
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        hand = ws.root / "_AgentDrafts" / "Perceptions"
+        hand.mkdir(parents=True)
+        (hand / "new-theory.md").write_text("planted\n", encoding="utf-8")
+        with self.assertRaises(_store.StoreError):
+            store.promote_draft("_AgentDrafts/Perceptions/new-theory.md")
+        self.assertFalse((ws.root / "Perceptions" / "new-theory.md").exists())
+        self.assertTrue((hand / "new-theory.md").is_file())
+
+    def test_promote_applies_the_append_rule_to_sessions(self):
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.propose_revision("Sessions/session-001.md",
+                                     "# Session 1\nThey fought.\n")
+        with self.assertRaises(_store.StoreError):
+            store.promote_draft(rel)
+        self.assertEqual(self._read(ws, "Sessions/session-001.md"),
+                         self.SESSION)
+        appended = self.SESSION + "Correction: it rained.\n"
+        store.update_draft(rel, appended)
+        store.promote_draft(rel)
+        self.assertEqual(self._read(ws, "Sessions/session-001.md"), appended)
+
+    def test_a_new_session_file_can_still_be_promoted(self):
+        # Append-only governs existing sessions; writing up a new one is
+        # the ordinary case.
+        ws = self.make_git_ws()
+        store = _store.WorkspaceStore(ws)
+        rel = store.save_draft("Sessions", "Session 002", "# Session 2\n")
+        self.assertEqual(store.promote_draft(rel), "Sessions/session-002.md")
+        self.assertEqual(self._read(ws, "Sessions/session-002.md"),
+                         "# Session 2\n")
+
+
 class TestUpdateDraft(StoreCase):
     def test_overwrites_an_existing_draft(self):
         ws = self.make_ws()

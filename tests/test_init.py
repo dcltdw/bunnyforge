@@ -137,6 +137,22 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
         self.assertNotIn("ask me whether", scope)
         self.assertNotIn("One ask per task", scope)
 
+    def test_direct_edits_are_used_only_when_asked(self):
+        # #104: under --allow-direct-edits the agent holds write_entity and
+        # promote_draft, and doctrine is where it learns when it may call
+        # them. Pin the section, both tools, and the explicit-ask rule.
+        # The protected targets are not pinned here: the store guard
+        # enforces those, whatever the prose says.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("## Direct edits", doctrine)
+        section = doctrine.split("## Direct edits", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        section = " ".join(section.split())
+        for needle in ("`write_entity`", "`promote_draft`",
+                       "explicitly ask"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, section)
+
 
 def _packaged_data_root() -> Path:
     """The data/ tree as a real directory.

@@ -221,19 +221,24 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
     if allow_direct_edits:
         @server.tool()
         def write_entity(path: str, content: str) -> str:
-            """Edit a canonical workspace file in place. Each edit is
-            auto-committed to git. Available only because this server was
-            started with --allow-direct-edits."""
+            """Edit a canonical workspace file in place — only when the GM
+            explicitly asks for this specific edit in this chat; otherwise
+            draft with save_draft or propose_revision, as if this tool did
+            not exist. Each edit is auto-committed to git. AGENTS.md,
+            campaign-doctrine.md, style-guide.md and the perception record
+            are refused, and a session file accepts only an append.
+            Available only because this server was started with
+            --allow-direct-edits."""
             return store.write_entity(path, content)
 
         @server.tool()
         def promote_draft(path: str) -> str:
-            """Move one draft the GM has just approved in this chat to its
-            canonical location (derived from the draft path) and commit
-            it. Only call this after the GM's explicit approval of that
-            specific draft. A stale revision is refused — merge with
-            update_draft first. Available only because this server was
-            started with --allow-direct-edits."""
+            """Move one draft to its canonical location (derived from the
+            draft path) and commit it — only when the GM explicitly asks
+            you to promote that specific draft in this chat. A stale
+            revision is refused — merge with update_draft first — and so
+            is any target write_entity refuses. Available only because
+            this server was started with --allow-direct-edits."""
             return store.promote_draft(path)
 
     def _reader(path):

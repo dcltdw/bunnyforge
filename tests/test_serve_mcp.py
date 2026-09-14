@@ -454,6 +454,19 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("promote_draft", off)
         self.assertIn("promote_draft", on)
 
+    async def test_write_tool_descriptions_require_an_explicit_ask(self):
+        # #104: a tool description reaches the agent on every call, even
+        # in a conversation that never loads the AGENTS.md resource. Both
+        # write tools carry the same rule -- only when the GM explicitly
+        # asks -- so neither is the lax door to the other.
+        server = serve_mcp.build_server(scaffold(self),
+                                        allow_direct_edits=True)
+        descs = {t.name: " ".join((t.description or "").split())
+                 for t in await server.list_tools()}
+        for name in ("write_entity", "promote_draft"):
+            with self.subTest(tool=name):
+                self.assertIn("explicitly asks", descs[name])
+
     async def test_save_draft_lands_in_the_drafts_dir(self):
         store = scaffold(self)
         server = serve_mcp.build_server(store)

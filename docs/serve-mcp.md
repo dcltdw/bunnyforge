@@ -415,18 +415,36 @@ invisible to both tools, exactly like `_Ignore/`.
 registers two more tools. `write_entity(path, content)` edits a
 canonical file in place and commits each edit with a
 `serve-mcp: edit <path>` message. `promote_draft(path)` moves a draft
-you have just approved in chat to its canonical location (derived from
-the draft path — slugged drafts mirror canon) and commits it as
-`serve-mcp: promote <path>`; a revision whose base no longer matches
-canon is refused, never silently applied over your interim edits.
-Promotion deliberately does not touch `compendium.md` or
-`front-burner.md` — index updates flow through `propose_revision` as
-ever. Both tools refuse outside a git repository: without history there
-is no review and no undo, and that is the only thing that makes
-changing canon defensible. It is a per-run flag rather than a config
-key on purpose — trading the review boundary for git history should be
-a decision you make when starting the server, not a setting that
-quietly persists.
+to its canonical location (derived from the draft path — slugged
+drafts mirror canon) and commits it as `serve-mcp: promote <path>`; a
+revision whose base no longer matches canon is refused, never silently
+applied over your interim edits. Promotion deliberately does not touch
+`compendium.md` or `front-burner.md` — index updates flow through
+`propose_revision` as ever. Both tools refuse outside a git repository:
+without history there is no review and no undo, and that is the only
+thing that makes changing canon defensible. It is a per-run flag rather
+than a config key on purpose — trading the review boundary for git
+history should be a decision you make when starting the server, not a
+setting that quietly persists.
+
+Having the tools does not license using them. Both tool descriptions,
+and the packaged `AGENTS.md`, tell the agent to call them **only when
+you explicitly ask** for that specific edit or promotion; otherwise it
+drafts exactly as it would without the flag.
+
+Some canon is off-limits to both tools whatever you ask, because
+doctrine already forbids changing it:
+
+- `AGENTS.md`, `campaign-doctrine.md` and `style-guide.md` at the
+  workspace root — the package's doctrine and your binding rules
+- anything under `perceptions_dir` (default `Perceptions/`), which is
+  regenerated from the wiki
+- an existing `Sessions/` file, unless the new content keeps the
+  existing text exactly and only adds to the end — a correction note,
+  not a revision
+
+`propose_revision` still works on all of these, so the agent can
+propose a style-guide change for you to review and apply by hand.
 
 Publishing is structurally absent in every mode: no tool here can reach
 `_Export/` or the wiki, so a remote agent cannot leak GM-only material to
