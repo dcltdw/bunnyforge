@@ -15,6 +15,16 @@ starts a fresh one.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-14
+
+The release where direct edits got rules. An agent uses `write_entity` and
+`promote_draft` only when the GM explicitly asks, and the store refuses
+what doctrine forbids changing, whatever it is asked. `serve-mcp` also
+learned to run like a service — `--auth-key-file`, exit-78 refusals,
+`--log-file`, and a macOS launch-agent recipe — and its refusal reasons
+reach the agent again on mcp 2.2. Read **Migration** before upgrading a
+live campaign.
+
 ### Added
 
 - `bunnyforge serve-mcp --log-file [PATH]` routes uvicorn's logs to a
@@ -94,6 +104,25 @@ starts a fresh one.
   hostname answers 502 until `serve-mcp` is started. One
   anti-recommendation: no Cloudflare Access in front of the hostname; the
   connector must complete the server's own OAuth flow against it. (#84)
+
+### Migration
+
+**Existing workspaces adopt the new `AGENTS.md`.** It gains a "Direct
+edits to canon" section and ships byte-identical, so the upgrade is the
+file copy in [`docs/adopting-doctrine.md`](docs/adopting-doctrine.md) →
+"Adopting a new version". A campaign that pins `bunnyforge==` bumps the
+pin in the same commit; a drift test comparing its copy to the installed
+package goes green only once both have moved.
+
+**`serve-mcp --allow-direct-edits` refuses writes it used to accept:**
+root-level `AGENTS.md`, `campaign-doctrine.md` and `style-guide.md`,
+anything under `perceptions_dir`, and any rewrite of an existing
+`Sessions/` file. Those changes now go through `propose_revision` and a
+hand edit.
+
+**Restart a running `serve-mcp` after upgrading, and start a new
+claude.ai conversation** — tool descriptions are read when a
+conversation starts, so an open one keeps the old wording.
 
 ## [0.5.0] — 2026-08-18
 
@@ -187,5 +216,6 @@ See step 5 of the migration recipe.
 time, not by an automated check** — nothing yet screens `src/bunnyforge/data/`
 for campaign-specific terms. That is the basis for the portability claim.
 
-[Unreleased]: https://github.com/dcltdw/bunnyforge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dcltdw/bunnyforge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dcltdw/bunnyforge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dcltdw/bunnyforge/compare/v0.4.0...v0.5.0
