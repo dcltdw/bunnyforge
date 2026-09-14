@@ -27,6 +27,7 @@ players even by accident.
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import stat
 import sys
@@ -95,7 +96,25 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         server.custom_route("/consent", methods=["GET", "POST"])(
             consent_endpoint(oauth, store.ws.config.name))
 
-    @server.tool()
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    def tool(fn):
+        """Register fn as a tool whose store refusals reach the agent.
+
+        A StoreError is an anticipated failure with an actionable reason.
+        mcp 2.2 passes only ToolError's text to the model; any other
+        exception counts as a crash, and the model sees a bare "Error
+        executing tool <name>" (#106). functools.wraps keeps the signature
+        and docstring the SDK reads to build the tool."""
+        @functools.wraps(fn)
+        def call(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except StoreError as exc:
+                raise ToolError(str(exc)) from exc
+        return server.tool()(call)
+
+    @tool
     def campaign_overview() -> dict:
         """Get your bearings in one call: the campaign's name, each section
         with how many entities it holds (the Archive count is the flat
@@ -112,7 +131,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         one message."""
         return store.overview()
 
-    @server.tool()
+    @tool
     def list_entities(section: str, scope: str = "both") -> list[dict]:
         """List one section's files with titles, one-line summaries, and
         an archived flag. section names the content section in either
@@ -125,13 +144,13 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         (the AGENTS.md doctrine resource carries the rule)."""
         return store.list_entities(section, scope)
 
-    @server.tool()
+    @tool
     def read_entity(path: str) -> str:
         """Read one workspace file in full, front matter included. Paths
         come from list_entities or search."""
         return store.read_entity(path)
 
-    @server.tool()
+    @tool
     def search(query: str, section: str | None = None,
                scope: str = "both") -> list[dict]:
         """Search the workspace for a phrase, returning each file that
@@ -147,14 +166,14 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         resource carries the rule)."""
         return store.search(query, section, scope)
 
-    @server.tool()
+    @tool
     def generate_names(culture: str, count: int = 10) -> dict:
         """Generate person and place names appropriate to one of this
         setting's cultures. Call campaign_overview or read a Setting file
         first if you are unsure which cultures exist."""
         return store.generate_names(culture, count)
 
-    @server.tool()
+    @tool
     def save_draft(section: str, name: str, content: str,
                    subdir: str | None = None) -> str:
         """Draft NEW content (a full markdown file, front matter included)
@@ -165,7 +184,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         with update_draft. Returns the draft's path."""
         return store.save_draft(section, name, content, subdir)
 
-    @server.tool()
+    @tool
     def propose_revision(path: str, content: str) -> str:
         """Propose a full-file revision of an EXISTING canonical file, as
         a shadow copy in your drafts directory; the GM reviews it as a
@@ -173,7 +192,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         merge, and update_draft instead. Returns the draft's path."""
         return store.propose_revision(path, content)
 
-    @server.tool()
+    @tool
     def update_draft(path: str, content: str) -> str:
         """Overwrite one of your existing drafts with revised content —
         the deliberate way to iterate on a draft across sessions.
@@ -182,7 +201,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         list_drafts."""
         return store.update_draft(path, content)
 
-    @server.tool()
+    @tool
     def list_drafts() -> list[dict]:
         """List your own unpromoted drafts from this and earlier sessions:
         path, kind ("new" content or a "revision" of an existing file),
@@ -192,7 +211,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         than writing it again."""
         return store.list_drafts()
 
-    @server.tool()
+    @tool
     def read_draft(path: str) -> str:
         """Read one of your pending drafts in full. Paths come from
         list_drafts. Draft material is UNREVIEWED and not canon — do not
@@ -200,7 +219,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         read_entity."""
         return store.read_draft(path)
 
-    @server.tool()
+    @tool
     def list_inbound() -> list[dict]:
         """The GM's inbound queue: material the GM authored elsewhere,
         awaiting extraction into proper entity files. Call this only when
@@ -210,7 +229,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         read_inbound can return it. Nothing here is canon."""
         return store.list_inbound()
 
-    @server.tool()
+    @tool
     def read_inbound(path: str) -> str:
         """Read one file from the GM's inbound queue, only when the GM
         asks you to extract. Paths come from list_inbound. The material
@@ -219,7 +238,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
         return store.read_inbound(path)
 
     if allow_direct_edits:
-        @server.tool()
+        @tool
         def write_entity(path: str, content: str) -> str:
             """Edit a canonical workspace file in place — only when the GM
             explicitly asks for this specific edit in this chat; otherwise
@@ -231,7 +250,7 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
             --allow-direct-edits."""
             return store.write_entity(path, content)
 
-        @server.tool()
+        @tool
         def promote_draft(path: str) -> str:
             """Move one draft to its canonical location (derived from the
             draft path) and commit it — only when the GM explicitly asks

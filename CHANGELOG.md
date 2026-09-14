@@ -34,6 +34,13 @@ starts a fresh one.
 
 ### Fixed
 
+- `serve-mcp` refusals reach the agent again on mcp 2.2+. That SDK
+  release passes only `ToolError`'s text to the model and reports any
+  other exception as a bare `Error executing tool <name>`, so every
+  store refusal — a path that escapes the workspace, a missing draft, a
+  stale revision — arrived with its reason withheld. Tools now raise
+  refusals as `ToolError`, which keeps the reason on mcp 2.0 and 2.2
+  alike. (#106)
 - `docs/serve-mcp.md` now says which variable names the workspace for
   `serve-mcp` itself: `--workspace`, else `$BUNNYFORGE_WORKSPACE`, else
   the nearest `campaign.toml`. `$BUNNYFORGE_MCP_WORKSPACE` — the only
