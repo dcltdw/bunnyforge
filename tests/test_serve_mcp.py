@@ -4,6 +4,7 @@ import io
 import logging
 import logging.config
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -619,6 +620,34 @@ class TestBuildServer(unittest.IsolatedAsyncioTestCase):
             "search", {"query": "tides", "scope": "live"}))
         self.assertIn("kim-ha-eun", payload)
         self.assertNotIn("Archive/NPCs/old.md", payload)
+
+    async def test_the_working_sequence_names_only_real_tools(self):
+        # #111: doctrine's working sequence names tools in backticks, and
+        # a renamed or removed tool would leave it teaching a call that
+        # does not exist. Derived from the prose rather than listed here,
+        # so a tool newly mentioned is checked without touching this test.
+        # NOT_TOOLS is every other snake_case identifier the section uses;
+        # a new one fails below with its name, and belongs in this set.
+        from bunnyforge import init
+        NOT_TOOLS = {"compendium_dirs", "drafts_pending", "inbound_pending"}
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("\n## The working sequence\n", doctrine)
+        section = doctrine.split("\n## The working sequence\n", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", section)) - NOT_TOOLS
+        server = serve_mcp.build_server(scaffold(self),
+                                        allow_direct_edits=True)
+        registered = {t.name for t in await server.list_tools()}
+        self.assertEqual(
+            named - registered, set(),
+            "the working sequence names a tool the server does not "
+            "register (or a new non-tool identifier: add it to NOT_TOOLS)")
+        # The floor: an extraction that found nothing would pass the check
+        # above vacuously.
+        self.assertGreaterEqual(named, {
+            "campaign_overview", "save_draft", "update_draft",
+            "propose_revision", "promote_draft", "list_inbound",
+            "read_inbound"})
 
 
 

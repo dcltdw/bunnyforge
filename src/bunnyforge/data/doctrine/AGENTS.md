@@ -98,6 +98,117 @@ The list is doctrine, and it grows as gaps appear. Questions specific to
 one campaign belong in `[[campaign-doctrine]]`; a gap that would bite
 any campaign belongs upstream as a bunnyforge ticket.
 
+## The working sequence
+
+The other sections of this file are rules. This one is the order they apply
+in, and what is still owed when each step finishes. It restates no rule:
+each step names the section that owns it, and that section wins on any
+disagreement. Tool names are the MCP server's; working on the filesystem
+instead, the steps are the same and the tools are your own file operations.
+
+When I ask how work here goes, this is the section to walk me through.
+
+### Phase 0 — Orient
+
+1. `campaign_overview` first: the sections, `[[front-burner]]`,
+   `[[open-questions]]`, and two counts — `drafts_pending` and
+   `inbound_pending`.
+2. The doctrine, in the order **Read order** above fixes.
+3. If `drafts_pending` is non-zero, `list_drafts` before starting anything
+   new: earlier work is resumed and merged, not written again.
+4. The **Task-start context** questions — in one message, and only the
+   ones my request left open.
+
+### Phase 1 — Decide what kind of file this is
+
+Writeup, brief, or record. **What gets written where**, below, carries the
+distinction, and **Which file a new fact belongs in** the choice of file.
+Decide before drafting, because the kind decides what is owed once the
+file lands:
+
+- **The writeup** — true always, `NPCs/mira-venn.md`. Owes a line in
+  `[[compendium]]`.
+- **The brief** — true this session, `Briefs/session-014/mira-venn.md`.
+  Owes no compendium line.
+- **The record** — what happened, `Sessions/session-014.md`. Owes no
+  compendium line, and is append-only.
+
+The compendium indexes only the sections `compendium_dirs` names in
+`campaign.toml` — by default `NPCs`, `Factions`, `Setting`, `Mechanics`,
+`PCs`, `Ideas`. `Briefs/` and `Sessions/` are deliberately outside it: a
+brief or a session record must **not** get a compendium line.
+
+### Phase 2 — New material
+
+1. **Check what exists** — `search` and `list_entities`, under the scope
+   **Retrieval scope** settles. Archived names are still taken.
+2. **Draft** — `save_draft`, with the full front matter `_Templates/`
+   describes (**File conventions**).
+3. **Say what you invented** — the short list after the draft that
+   **Flag invented canon in drafts** asks for.
+4. **I review.** The draft waits in `_AgentDrafts/`, where `list_drafts`
+   and `read_draft` find it again. Iterate with `update_draft`;
+   `save_draft` never overwrites.
+5. **Promotion is mine to call.** By default you have no tool for it: I
+   move the file out of `_AgentDrafts/` by hand. With direct edits
+   enabled, `promote_draft` does it — only when I explicitly ask
+   (**Direct edits to canon**). Approving a draft is not asking.
+6. **Index it — if Phase 1 said a line is owed.** `propose_revision` on
+   `compendium.md` adds the entry. `promote_draft` says so itself when it
+   lands a file the compendium does not link yet; when I promote by hand
+   nothing says so, so you raise it. Only one proposal per file can be
+   pending: several new entities share one compendium revision, extended
+   with `update_draft`.
+7. **Current state** — if the new material moves it, propose the
+   `[[front-burner]]` revision too (**Which file a new fact belongs in**).
+8. **Verify** — `bunnyforge review checkup` (**Reviewing the workspace**).
+   No MCP tool runs it: ask me to, and expect it clean only once
+   everything from this task has landed.
+
+**Drafts that link to each other.** Nothing enforces a promotion order.
+Until both land, the checkup's wikilink check flags the dangling link —
+that is the safety net working, not a fault to fix by unlinking. The same
+holds for a compendium line that lands before the file it indexes.
+
+### Phase 3 — Revising existing canon
+
+1. `read_entity` the current file: the revision is proposed against
+   exactly what you read.
+2. `propose_revision` writes a shadow at the mirrored path under
+   `_AgentDrafts/` and records the hash of the canon it was based on. One
+   pending proposal per file — if one exists, `read_draft` it, merge, and
+   `update_draft` instead.
+3. I review it as a diff against the live file.
+4. Promotion is the **same tool** as for a new draft — `promote_draft`,
+   under the same explicit-ask rule — or my hand, by default. The tool
+   branches on whether the target already exists. For a revision it
+   refuses if canon changed after the proposal, or if no base was
+   recorded. On that refusal: `read_entity` the current file, merge with
+   `update_draft` (which re-bases the shadow), and ask me again.
+   `list_drafts` marks such a revision `stale` before you get that far.
+5. Some files take only a proposal, whatever I ask — **Direct edits to
+   canon** lists them — and a past session takes only an append.
+6. Steps 7 and 8 of Phase 2 apply unchanged. A revision owes no new
+   compendium line unless it renames or retires the file
+   (**File conventions**).
+
+### Phase 4 — Inbound extraction
+
+1. `inbound_pending` in the overview licenses noticing and offering —
+   never listing, never reading. **Extracting from _ExtractInbound/**
+   carries the whole contract.
+2. When I ask: `list_inbound`, then `read_inbound`. A file marked
+   unreadable needs converting first; say so rather than guessing at it.
+3. What you extract becomes drafts, and from there it is Phase 1 and
+   Phase 2 — conflict rule included: where the source disagrees with
+   canon, stop and ask.
+4. **Still owed at the end:** once I confirm the extraction, the spent
+   source moves to `_ExtractInbound/_Done/`. No MCP tool reaches that
+   move — tell me it is owed, and I will make it.
+
+Whatever the phase, the last step is **At the end of a working session**,
+below: say which files the work made stale, and draft the updates.
+
 ## Verify against the files, not against earlier prose
 
 A fact restated in a conversation summary is not verified. Before relying on a
@@ -398,8 +509,10 @@ apply to any prep material produced here:
   visibility** above. Default `gm-only` when unsure.
 - Cross-reference with wikilinks: `[[style-guide]]` for a document,
   `[[Mechanics]]` for a directory.
-- New files must be added to `[[compendium]]` in the same sitting. An unindexed
-  file is an invisible file.
+- New files in a section the compendium indexes must be added to
+  `[[compendium]]` in the same sitting. An unindexed file is an invisible
+  file. Which sections those are — and which deliberately are not — is
+  under **The working sequence** above, Phase 1.
 - Session files are append-only. Do not revise a past session to fit a later
   decision; add a correction note.
 - Brief filenames must match their writeup: `Briefs/session-014/mira-venn.md` pairs

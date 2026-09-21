@@ -358,6 +358,13 @@ are missing.
 
 ## What the agent can do
 
+This section is an inventory: what each tool does. The *order* to use them
+in — and what is still owed when a step finishes — is the agent's own
+doctrine: the packaged `AGENTS.md`, under
+[The working sequence](../src/bunnyforge/data/doctrine/AGENTS.md#the-working-sequence).
+It reaches the agent as the `bunnyforge://doctrine/AGENTS.md` resource, so
+asking the agent to walk you through it works too.
+
 **Read canon:** `campaign_overview`, `list_entities`, `read_entity`,
 `search`, `generate_names`. Workspace doctrine (`style-guide.md`,
 `situation-design.md`, `AGENTS.md`, `campaign-doctrine.md`) is served as

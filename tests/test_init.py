@@ -153,6 +153,100 @@ class TestPackagedDoctrineIsPortable(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, section)
 
+    # -- #111: The working sequence ----------------------------------------
+    # The one full copy of the end-to-end order of work. README.md and
+    # docs/serve-mcp.md link it rather than restating it (tests/test_docs.py
+    # binds those); what is pinned HERE is the section's own code-facing
+    # claims, so the copy cannot drift from the code it describes.
+
+    def _working_sequence(self) -> str:
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        self.assertIn("\n## The working sequence\n", doctrine)
+        section = doctrine.split("\n## The working sequence\n", 1)[1]
+        return section.split("\n## ", 1)[0]
+
+    def test_the_working_sequence_has_its_five_phases_in_order(self):
+        # The headings are an interface: tests/test_docs.py reads them to
+        # check the README's outline. Renaming one is fine -- it fails here
+        # first, with the list to update in plain sight.
+        phases = re.findall(r"^### Phase (\d) — (.+)$",
+                            self._working_sequence(), re.MULTILINE)
+        self.assertEqual(phases, [
+            ("0", "Orient"),
+            ("1", "Decide what kind of file this is"),
+            ("2", "New material"),
+            ("3", "Revising existing canon"),
+            ("4", "Inbound extraction"),
+        ])
+
+    def test_the_working_sequence_states_the_default_compendium_dirs(self):
+        # Which sections owe a compendium line is configuration, and the
+        # section quotes the default. Bound to _config so a changed default
+        # cannot leave doctrine teaching the old list -- and Briefs/Sessions
+        # are asserted OUT of the default first, because the sentence telling
+        # the agent never to index them is only true while that holds.
+        flat = " ".join(self._working_sequence().split())
+        defaults = _config._DEFAULTS["compendium_dirs"]
+        stated = re.search(r"by default ((?:`[A-Za-z]+`,? ?)+)", flat)
+        self.assertIsNotNone(
+            stated,
+            "the 'by default `NPCs`, ...' sentence has been reworded past "
+            "the pattern this test reads -- restate the list or update the "
+            "pattern; an unmatched regex must not pass vacuously")
+        self.assertEqual(re.findall(r"`([A-Za-z]+)`", stated.group(1)),
+                         list(defaults))
+        for unindexed in ("Briefs", "Sessions"):
+            with self.subTest(unindexed=unindexed):
+                self.assertNotIn(unindexed, defaults)
+                self.assertIn(f"`{unindexed}/`", flat)
+
+    def test_the_working_sequence_carries_what_is_nowhere_else(self):
+        # #111's list of things no other document says. One needle each:
+        # promotion is one tool for drafts and revisions alike; by default
+        # it is the GM's, by hand; the index entry rides a proposed revision;
+        # revisions iterate through update_draft; nothing orders two linked
+        # drafts; and the _Done/ move is reachable by no tool.
+        flat = " ".join(self._working_sequence().split())
+        for needle in ("same tool", "by hand", "`promote_draft`",
+                       "`propose_revision`", "`update_draft`",
+                       "Nothing enforces a promotion order",
+                       "`_ExtractInbound/_Done/`", "No MCP tool reaches"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, flat)
+
+    def test_the_working_sequence_cites_sections_that_exist(self):
+        # The section restates no rule: it names the section that owns each
+        # one. A renamed heading would leave that citation pointing nowhere,
+        # and nothing else would notice -- a bold phrase is not a link.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        headings = re.findall(r"^#{2,3} (.+)$", doctrine, re.MULTILINE)
+        flat = " ".join(self._working_sequence().split())
+        for owner in ("Read order", "Task-start context",
+                      "What gets written where",
+                      "Which file a new fact belongs in", "Retrieval scope",
+                      "File conventions", "Flag invented canon in drafts",
+                      "Direct edits to canon", "Reviewing the workspace",
+                      "Extracting from _ExtractInbound/",
+                      "At the end of a working session"):
+            with self.subTest(owner=owner):
+                self.assertIn(f"**{owner}**", flat)
+                self.assertTrue(
+                    any(h.startswith(owner) for h in headings),
+                    f"the working sequence cites **{owner}**, but no "
+                    "heading in AGENTS.md starts with that")
+
+    def test_file_conventions_defers_to_the_sequence_on_indexing(self):
+        # The bullet used to say every new file needs a compendium line,
+        # which is false for briefs and sessions and contradicted the
+        # sequence from inside the same file. One owner: the bullet keeps
+        # the rule, the sequence keeps which sections it covers.
+        doctrine = init.packaged_bytes("doctrine/AGENTS.md").decode("utf-8")
+        section = doctrine.split("\n## File conventions\n", 1)[1]
+        section = " ".join(section.split("\n## ", 1)[0].split())
+        self.assertNotIn("New files must be added", section)
+        self.assertIn("a section the compendium indexes", section)
+        self.assertIn("**The working sequence**", section)
+
 
 def _packaged_data_root() -> Path:
     """The data/ tree as a real directory.

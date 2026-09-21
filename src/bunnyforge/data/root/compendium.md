@@ -5,9 +5,11 @@ with a wikilink to its full file. This document exists so that a single
 retrieval can surface the shape of the whole campaign; keep entries short and
 resist the urge to expand them in place.
 
-**Maintenance rule:** when a new file is created anywhere in this workspace, add
-a line here in the same sitting. An unindexed file is an invisible file, and
-`bunnyforge review checkup` warns about every entity missing from here.
+**Maintenance rule:** when a new file is created in a section this compendium
+indexes — `compendium_dirs` in `campaign.toml`; briefs and session records are
+deliberately not indexed — add a line here in the same sitting. An unindexed
+file is an invisible file, and `bunnyforge review checkup` warns about every
+entity missing from here.
 
 Out-of-game planning (phases, pacing, design intent) lives in `[[out-of-game]]`,
 not here — this file holds world truth only. Deferred workspace and tooling work
