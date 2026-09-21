@@ -1400,3 +1400,104 @@ class TestPromoteDraft(StoreCase):
         self.assertFalse(
             (ws.root / "_AgentDrafts" / ".proposal-bases.json").exists())
         self.assertEqual(self._git(ws, "status", "--porcelain").strip(), "")
+
+
+class TestCompendiumReminder(StoreCase):
+    """An entity promoted into a compendium-indexed section still owes a
+    `[[compendium]]` line, and doctrine wants it in the same sitting. The
+    checkup catches the miss eventually; this catches it at promotion,
+    while the agent is still there to act on it (#110).
+
+    Advisory only: it reports, it never writes.
+    """
+
+    def _compendium(self, ws, body: str) -> None:
+        (ws.root / "compendium.md").write_text(body, encoding="utf-8")
+
+    def test_reminds_when_an_indexed_section_file_is_missing_from_it(self):
+        ws = self.make_ws()
+        self._compendium(ws, "# Compendium\n\n## People\n")
+        store = _store.WorkspaceStore(ws)
+        note = store.compendium_reminder("NPCs/kim-ha-eun.md")
+        self.assertIsNotNone(note)
+        self.assertIn("NPCs/kim-ha-eun.md", note)
+        self.assertIn("compendium.md", note)
+
+    def test_silent_when_the_compendium_already_links_the_file(self):
+        ws = self.make_ws()
+        self._compendium(ws, "# Compendium\n\n- [[kim-ha-eun]] — ferry captain.\n")
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNone(store.compendium_reminder("NPCs/kim-ha-eun.md"))
+
+    def test_silent_for_a_section_the_compendium_does_not_index(self):
+        # Briefs and Sessions are deliberately outside compendium_dirs:
+        # a session brief must NOT get an index line, so reminding about
+        # one would train the agent to write entries doctrine refuses.
+        ws = self.make_ws()
+        self._compendium(ws, "# Compendium\n")
+        (ws.root / "Briefs" / "session-014").mkdir(parents=True)
+        (ws.root / "Briefs" / "session-014" / "kim-ha-eun.md").write_text(
+            NPC, encoding="utf-8")
+        (ws.root / "Sessions").mkdir()
+        (ws.root / "Sessions" / "session-014.md").write_text(
+            "# Session 14\n", encoding="utf-8")
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNone(
+            store.compendium_reminder("Briefs/session-014/kim-ha-eun.md"))
+        self.assertIsNone(
+            store.compendium_reminder("Sessions/session-014.md"))
+
+    def test_a_path_form_wikilink_counts_as_indexed(self):
+        # [[NPCs/kim-ha-eun]] is how the compendium often spells an entry;
+        # resolving it by last segment is resolve_target's job, and this
+        # pins that the reminder asks resolve_target rather than
+        # string-matching the stem itself.
+        ws = self.make_ws()
+        self._compendium(ws, "# Compendium\n\n- [[NPCs/kim-ha-eun]] — captain.\n")
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNone(store.compendium_reminder("NPCs/kim-ha-eun.md"))
+
+    def test_an_alias_counts_as_indexed(self):
+        # "A file that cannot be found under the name someone uses for it
+        # is a file that does not exist" -- the compendium may well spell
+        # an entry by its epithet, and that is still an index entry.
+        ws = self.make_ws()
+        (ws.root / "NPCs" / "kim-ha-eun.md").write_text(
+            "---\ntitle: Kim Ha-eun\naliases: [The Ferry Captain]\n"
+            "summary: Kim Ha-eun is a ferry captain.\n---\nShe knows the tides.\n",
+            encoding="utf-8")
+        self._compendium(ws, "# Compendium\n\n- [[The Ferry Captain]] — captain.\n")
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNone(store.compendium_reminder("NPCs/kim-ha-eun.md"))
+
+    def test_a_commented_out_link_does_not_count_as_indexed(self):
+        # The packaged compendium.md ships its per-section examples inside
+        # HTML comments. Counting those as real entries would silence the
+        # reminder in exactly the workspaces that need it most -- fresh
+        # ones, where nothing is indexed yet.
+        ws = self.make_ws()
+        self._compendium(
+            ws, "# Compendium\n\n## People\n\n"
+                "<!-- One line per major NPC:\n"
+                "     - [[kim-ha-eun]] — what they want. -->\n")
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNotNone(store.compendium_reminder("NPCs/kim-ha-eun.md"))
+
+    def test_an_archived_file_answers_to_its_mirrored_section(self):
+        # Retiring a file does not un-index it (#62): Archive/NPCs/ is
+        # still NPCs for compendium purposes, so a promotion landing there
+        # still owes an entry -- pointed at its Archive path.
+        ws = self.make_archived_ws()
+        self._compendium(ws, "# Compendium\n")
+        store = _store.WorkspaceStore(ws)
+        note = store.compendium_reminder("Archive/NPCs/old-hag.md")
+        self.assertIsNotNone(note)
+        self.assertIn("Archive/NPCs/old-hag.md", note)
+
+    def test_a_workspace_with_no_compendium_still_gets_the_reminder(self):
+        # check_compendium treats a missing compendium.md as an empty
+        # index and warns for every entity; the reminder agrees, rather
+        # than going quiet exactly where nothing is indexed at all.
+        ws = self.make_ws()  # make_ws writes no compendium.md
+        store = _store.WorkspaceStore(ws)
+        self.assertIsNotNone(store.compendium_reminder("NPCs/kim-ha-eun.md"))

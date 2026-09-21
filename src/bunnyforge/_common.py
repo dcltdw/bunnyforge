@@ -309,3 +309,48 @@ def markdown_links_to_wikilinks(text: str) -> str:
     policy never inspected -- including one naming a gm-only document (#21).
     """
     return _MD_LINK_RE.sub(r"[[\2|\1]]", text)
+
+
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+# This workspace's convention (AGENTS.md) is to write wikilinks inside
+# backticks: `[[entity-name]]`. A code span containing nothing but one
+# wikilink is unwrapped before the ordinary inline-code strip runs, so the
+# link inside it is still extracted; multi-token or prose-bearing spans are
+# untouched here and fall to the ordinary strip below.
+_WIKILINK_CODE_SPAN_RE = re.compile(r"`(\[\[[^`\n]*\]\])`")
+
+
+def _unwrap_single_wikilink_span(m: re.Match) -> str:
+    raw = m.group(1)
+    if raw.count("[[") == 1:
+        return raw
+    return m.group(0)
+
+
+def extract_wikilinks(body: str) -> list[str]:
+    """Every `[[target]]` a document really links, ignoring the ones it
+    only quotes: fenced blocks, inline code, and HTML comments are
+    stripped first.
+
+    Lives here beside target_index/resolve_target rather than in review.py
+    because three surfaces now ask the same question -- review's wikilink
+    and compendium checks, and the store's promotion reminder (#110) --
+    and a data layer should not import the reporting CLI to get a parser.
+    The HTML-comment strip is load-bearing for that third caller: the
+    packaged compendium.md ships its examples commented out, and counting
+    those as entries would silence the reminder in a fresh workspace.
+    """
+    text = _FENCE_RE.sub("", body)
+    text = _WIKILINK_CODE_SPAN_RE.sub(_unwrap_single_wikilink_span, text)
+    text = _INLINE_CODE_RE.sub("", text)
+    text = _HTML_COMMENT_RE.sub("", text)
+    text = markdown_links_to_wikilinks(text)
+    targets = []
+    for raw in _WIKILINK_RE.findall(text):
+        target = raw.split("|", 1)[0].split("#", 1)[0].strip()
+        if target:
+            targets.append(target)
+    return targets

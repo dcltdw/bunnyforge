@@ -15,6 +15,21 @@ starts a fresh one.
 
 ## [Unreleased]
 
+### Added
+
+- `promote_draft` now tells the agent when the file it just promoted
+  lands in a compendium-indexed section that `compendium.md` does not
+  link. Doctrine wants the index entry in the same sitting; until now
+  nothing said so until `review checkup` ran, separately and later.
+  Advisory only — promotion still writes no index, and sections the
+  compendium does not index (briefs, sessions) stay silent. (#110)
+
+### Changed
+
+- `extract_wikilinks` moved from `review.py` to `_common.py`, beside
+  `target_index` and `resolve_target`, now that the store asks the same
+  question too. `review.extract_wikilinks` still resolves. (#110)
+
 ## [0.6.0] — 2026-09-14
 
 The release where direct edits got rules. An agent uses `write_entity` and

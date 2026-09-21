@@ -426,7 +426,7 @@ empty targets, and bare content-directory names such as `[[Mechanics]]`.
 disagree about what counts as a broken link *target*.
 
 That agreement is about targets only, not about which links get inspected in
-the first place. `review.py`'s `extract_wikilinks` strips fenced and inline
+the first place. `_common.extract_wikilinks` strips fenced and inline
 code *before* scanning for links, so a markdown or wikilink written inside
 backticks or a ``` fence passes the checkup clean. The exporter applies the
 same policy to every link regardless of surrounding markup (see above), so a

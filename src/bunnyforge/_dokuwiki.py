@@ -119,7 +119,7 @@ def parse_wikilink(raw: str) -> LinkRef:
     """Split the text between [[ and ]] into target, #anchor and |label.
 
     The form is `target#anchor|label`; both anchor and label are optional.
-    Matches how review.py's extract_wikilinks reads the same syntax.
+    Matches how _common.extract_wikilinks reads the same syntax.
     """
     target_part, _, label = raw.partition("|")
     target, _, anchor = target_part.partition("#")

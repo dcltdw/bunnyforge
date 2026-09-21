@@ -256,9 +256,18 @@ def build_server(store: WorkspaceStore, *, allow_direct_edits: bool = False,
             draft path) and commit it — only when the GM explicitly asks
             you to promote that specific draft in this chat. A stale
             revision is refused — merge with update_draft first — and so
-            is any target write_entity refuses. Available only because
-            this server was started with --allow-direct-edits."""
-            return store.promote_draft(path)
+            is any target write_entity refuses. Returns the promoted
+            path, and says so when that file still owes a
+            `[[compendium]]` line — promotion never writes the index
+            itself. Available only because this server was started with
+            --allow-direct-edits."""
+            promoted = store.promote_draft(path)
+            # The store returns the path and nothing else, because its
+            # callers use it as one. The advisory is agent-facing prose,
+            # so it is composed here, alongside the tool descriptions
+            # that carry the rest of the agent's rules (#110).
+            owed = store.compendium_reminder(promoted)
+            return promoted if owed is None else f"{promoted}\n\n{owed}"
 
     def _reader(path):
         def read() -> str:
