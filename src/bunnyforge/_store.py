@@ -640,6 +640,52 @@ class WorkspaceStore:
                     "retrying")
         return target_rel
 
+    def compendium_reminder(self, path: str) -> str | None:
+        """One sentence for the agent when `path` still owes a
+        `[[compendium]]` line — or None when it owes nothing.
+
+        Promotion deliberately does not touch `compendium.md`: index
+        updates cross the review boundary through propose_revision like
+        any other change to canon, and this does not change that. It only
+        says an entry is still owed, at the moment the agent can still
+        act on it. `bunnyforge review checkup` catches the same miss, but
+        it is a separate step the GM runs later (#110).
+
+        Silent outside `compendium_dirs`. Briefs and Sessions are
+        deliberately not indexed, so reminding about one would teach the
+        agent to write entries doctrine refuses. The membership test is
+        check_compendium's, archive rule included: retiring a file does
+        not un-index it, so an archived file answers to its mirrored
+        section (#62).
+        """
+        cfg = self.ws.config
+        parts = Path(path).parts
+        section = parts[0] if parts else ""
+        if section == cfg.archive_dir and len(parts) > 2:
+            section = parts[1]
+        if section not in cfg.compendium_dirs:
+            return None
+        target = self.ws.root / path
+        fm, _body = _common.split_front_matter(
+            target.read_text(encoding="utf-8"))
+        # An index holding only this file: resolve_target then answers
+        # "does this link point here?" using the same stem-and-alias
+        # notion of "refers to a file" review's own checks use, without a
+        # whole-workspace scan for one question about one path.
+        index = {spelling: {target} for spelling in
+                 {target.stem.lower()}
+                 | {a.lower() for a in
+                    _common.split_aliases(fm.get("aliases", ""))}}
+        comp = self.ws.root / "compendium.md"
+        if comp.is_file():
+            for link in _common.extract_wikilinks(
+                    comp.read_text(encoding="utf-8")):
+                if _common.resolve_target(link, index):
+                    return None
+        return (f"{path} is not yet in compendium.md — doctrine wants the "
+                "entry in the same sitting. propose_revision compendium.md "
+                "to add it.")
+
     # -- inbound queue ------------------------------------------------------
     # The GM's inbound queue: material authored elsewhere, awaiting
     # extraction into proper entity files. Read-only here, and the tool

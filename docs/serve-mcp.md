@@ -420,7 +420,12 @@ drafts mirror canon) and commits it as `serve-mcp: promote <path>`; a
 revision whose base no longer matches canon is refused, never silently
 applied over your interim edits. Promotion deliberately does not touch
 `compendium.md` or `front-burner.md` — index updates flow through
-`propose_revision` as ever. Both tools refuse outside a git repository:
+`propose_revision` as ever. It does, however, *say* when it has promoted
+a file into a compendium-indexed section that `compendium.md` does not
+yet link: doctrine wants that entry in the same sitting, and the agent
+is told while it is still there to offer one. Purely advisory — nothing
+is written, and sections the compendium does not index (briefs,
+sessions) stay silent. Both tools refuse outside a git repository:
 without history there is no review and no undo, and that is the only
 thing that makes changing canon defensible. It is a per-run flag rather
 than a config key on purpose — trading the review boundary for git

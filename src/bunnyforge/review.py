@@ -34,9 +34,12 @@ from bunnyforge import _common  # noqa: F401
 from bunnyforge._common import (
     FileRec,
     content_dir_names,
+    # Re-exported deliberately: review.extract_wikilinks is the spelling
+    # this module's own tests use, and the definition moved to _common
+    # once the store needed it too (#110).
+    extract_wikilinks,
     is_pass_through_target,
     iter_content_files,
-    markdown_links_to_wikilinks,
     normalize_visibility,
     resolve_target,
     strip_yaml_comment,
@@ -201,39 +204,6 @@ def check_visibility_audit(files: list[FileRec], workspace: Path) -> list[Findin
             message = "mixed"
         out.append(Finding("info", "visibility-audit", _rel(rec.path, workspace), message))
     return out
-
-
-_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
-_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
-_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-_WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
-# This workspace's convention (AGENTS.md) is to write wikilinks inside
-# backticks: `[[entity-name]]`. A code span containing nothing but one
-# wikilink is unwrapped before the ordinary inline-code strip runs, so the
-# link inside it is still extracted; multi-token or prose-bearing spans are
-# untouched here and fall to the ordinary strip below.
-_WIKILINK_CODE_SPAN_RE = re.compile(r"`(\[\[[^`\n]*\]\])`")
-
-
-def _unwrap_single_wikilink_span(m: re.Match) -> str:
-    raw = m.group(1)
-    if raw.count("[[") == 1:
-        return raw
-    return m.group(0)
-
-
-def extract_wikilinks(body: str) -> list[str]:
-    text = _FENCE_RE.sub("", body)
-    text = _WIKILINK_CODE_SPAN_RE.sub(_unwrap_single_wikilink_span, text)
-    text = _INLINE_CODE_RE.sub("", text)
-    text = _HTML_COMMENT_RE.sub("", text)
-    text = markdown_links_to_wikilinks(text)
-    targets = []
-    for raw in _WIKILINK_RE.findall(text):
-        target = raw.split("|", 1)[0].split("#", 1)[0].strip()
-        if target:
-            targets.append(target)
-    return targets
 
 
 

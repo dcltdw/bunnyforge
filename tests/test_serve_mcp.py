@@ -4,6 +4,7 @@ import io
 import logging
 import logging.config
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -825,3 +826,46 @@ class TestPreflight(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_MCP, "mcp extra not installed")
+class TestPromoteCompendiumReminder(unittest.IsolatedAsyncioTestCase):
+    """The promote_draft tool hands the agent the promoted path and, when
+    the file still owes a `[[compendium]]` line, says so in the same
+    breath (#110).
+
+    The store keeps returning the bare path -- callers treat it as one --
+    so the sentence is composed here, where the agent-facing prose lives.
+    """
+
+    def _git_store(self, compendium: str) -> _store.WorkspaceStore:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / "campaign.toml").write_text(MINIMAL, encoding="utf-8")
+        (root / "NPCs").mkdir()
+        (root / "NPCs" / "kim-ha-eun.md").write_text(NPC, encoding="utf-8")
+        (root / "compendium.md").write_text(compendium, encoding="utf-8")
+        for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                    ["config", "user.name", "t"], ["add", "-A"],
+                    ["commit", "-qm", "seed"]):
+            subprocess.run(["git", "-C", str(root)] + cmd, check=True)
+        return _store.WorkspaceStore(_config.open_workspace(root))
+
+    async def _promote(self, store) -> str:
+        server = serve_mcp.build_server(store, allow_direct_edits=True)
+        rel = store.save_draft("Ideas", "Harbor Heist",
+                               "---\ntitle: Harbor Heist\n---\nplot\n")
+        result = await server.call_tool("promote_draft", {"path": rel})
+        return "".join(part.text for part in result.content)
+
+    async def test_says_so_when_the_promoted_file_is_not_indexed(self):
+        payload = await self._promote(self._git_store("# Compendium\n"))
+        self.assertIn("Ideas/harbor-heist.md", payload)
+        self.assertIn("compendium.md", payload)
+        self.assertIn("propose_revision", payload)
+
+    async def test_returns_the_bare_path_when_nothing_is_owed(self):
+        # The quiet case must stay quiet: a reminder on every promotion
+        # is noise the agent learns to skip past.
+        payload = await self._promote(self._git_store(
+            "# Compendium\n\n- [[harbor-heist]] — a plot.\n"))
+        self.assertEqual(payload.strip(), "Ideas/harbor-heist.md")
