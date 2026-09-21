@@ -110,6 +110,31 @@ It also scaffolds a `.vscode/` pair — a visibility colour language for the
 editor — shipped off. `bunnyforge vscode` manages it; see
 [VS Code integration](#vs-code-integration) above.
 
+## Working in a workspace
+
+Day to day, a campaign workspace is worked *with an agent* — over MCP
+([`docs/serve-mcp.md`](docs/serve-mcp.md)) or directly on the files — and
+the work has a fixed shape. The agent's doctrine carries it in full, as
+[The working sequence](src/bunnyforge/data/doctrine/AGENTS.md#the-working-sequence);
+in outline:
+
+0. **Orient** — load the campaign overview and the doctrine, then ask
+   whatever the request left open, once.
+1. **Decide what kind of file this is** — a writeup (true always), a brief
+   (true this session) or a record (what happened). The kind decides what
+   is still owed after the file lands.
+2. **New material** — check what exists, draft, review, promote, index,
+   verify. A draft stays outside canon until you promote it.
+3. **Revising existing canon** — a proposed revision, reviewed as a diff;
+   one that canon has moved under is refused rather than applied.
+4. **Inbound extraction** — material brought in from elsewhere becomes
+   drafts, and only when you ask.
+
+A test binds that outline to the doctrine's phase headings, so the two
+cannot quietly fall out of step. The rules themselves live only there —
+and because `serve-mcp` serves that file to the agent, you can also just
+ask the agent to walk you through it.
+
 ## Names
 
 `bunnyforge names` builds names from syllable inventories you write
