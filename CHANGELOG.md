@@ -15,6 +15,15 @@ starts a fresh one.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-21
+
+The release where the order of work got written down. The packaged
+`AGENTS.md` now carries the end-to-end working sequence — what to do in
+what order, and what is still owed when each step finishes — and
+`promote_draft` says when a file it promotes still needs its compendium
+line. Read **Migration** before upgrading a live campaign; it is a file
+copy and a restart.
+
 ### Added
 
 - `promote_draft` now tells the agent when the file it just promoted
@@ -49,6 +58,30 @@ starts a fresh one.
   are indexed, and briefs and session records must not be. The
   `compendium.md` stub is scaffold-once, so that half reaches new
   workspaces only. (#111)
+
+### Migration
+
+**Existing workspaces adopt the new `AGENTS.md`.** It gains "The working
+sequence" and a qualified indexing rule, and ships byte-identical, so the
+upgrade is the file copy in
+[`docs/adopting-doctrine.md`](docs/adopting-doctrine.md) → "Adopting a new
+version". A campaign that pins `bunnyforge==` bumps the pin in the same
+commit.
+
+**Optionally, correct the workspace's own `compendium.md`.** Its
+maintenance-rule sentence was scaffolded once and is the GM's thereafter,
+so upgrading does not touch it. If it still says to index a new file
+"anywhere in this workspace", it contradicts the adopted `AGENTS.md`:
+briefs and session records are never indexed.
+
+**Restart a running `serve-mcp` after upgrading, and start a new
+claude.ai conversation** — `promote_draft`'s description changed, and
+tool descriptions are read when a conversation starts.
+
+**Packaged prose in this release was cleared by deliberate human reads at
+PR time, not by an automated check** — nothing yet screens
+`src/bunnyforge/data/` for campaign-specific terms (#65). That is the
+basis for the portability claim.
 
 ## [0.6.0] — 2026-09-14
 
@@ -251,6 +284,7 @@ See step 5 of the migration recipe.
 time, not by an automated check** — nothing yet screens `src/bunnyforge/data/`
 for campaign-specific terms. That is the basis for the portability claim.
 
-[Unreleased]: https://github.com/dcltdw/bunnyforge/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dcltdw/bunnyforge/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dcltdw/bunnyforge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dcltdw/bunnyforge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dcltdw/bunnyforge/compare/v0.4.0...v0.5.0
