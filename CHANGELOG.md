@@ -23,12 +23,32 @@ starts a fresh one.
   nothing said so until `review checkup` ran, separately and later.
   Advisory only — promotion still writes no index, and sections the
   compendium does not index (briefs, sessions) stay silent. (#110)
+- **The working sequence.** Packaged `AGENTS.md` gains a section giving
+  the end-to-end order of work in a workspace — orient, decide what kind
+  of file this is, new material, revising existing canon, inbound
+  extraction — and what is still owed when each step finishes. It says
+  what no document did: that `promote_draft` is one tool for new drafts
+  and proposed revisions alike; that by default promotion is the GM's, by
+  hand; that the compendium entry rides a proposed revision of
+  `compendium.md`; that nothing orders two drafts which link to each
+  other; and that moving spent inbound source to `_Done/` is manual. The
+  README outlines it and `docs/serve-mcp.md` links it — neither restates
+  it, and tests bind the outline, both links, the section's tool names
+  and its default `compendium_dirs` list to their sources.
+  **Existing workspaces:** adopt the new `AGENTS.md`
+  ([`docs/adopting-doctrine.md`](docs/adopting-doctrine.md)). (#111)
 
 ### Changed
 
 - `extract_wikilinks` moved from `review.py` to `_common.py`, beside
   `target_index` and `resolve_target`, now that the store asks the same
   question too. `review.extract_wikilinks` still resolves. (#110)
+- Doctrine no longer says *every* new file needs a compendium line.
+  `AGENTS.md` § File conventions and the scaffolded `compendium.md` now
+  say what the code always did: only files in a `compendium_dirs` section
+  are indexed, and briefs and session records must not be. The
+  `compendium.md` stub is scaffold-once, so that half reaches new
+  workspaces only. (#111)
 
 ## [0.6.0] — 2026-09-14
 
